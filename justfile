@@ -2,7 +2,7 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 
 [private]
 default:
-    @just --list --unsorted
+    @just --list --unsorted --list-submodules
 
 # Lint gate (same as CI): fmt, clippy (warnings are errors), tests, shellcheck, advisories, dependency age
 [group('verify')]
