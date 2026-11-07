@@ -1,4 +1,4 @@
-//! sa-forge-console: a read-only desktop view of an sa-forge-signer. It reads the audit log and
+//! sa-forge-signer-console: a read-only desktop view of an sa-forge-signer. It reads the audit log and
 //! the config, polls `serve`'s `/health`, and never writes, signs or approves anything.
 
 mod app;
@@ -88,12 +88,12 @@ fn main() -> Result<()> {
         .or_else(|| cfg.listen.as_deref().map(url_from_listen));
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_title("sa-forge-console")
+            .with_title("sa-forge-signer-console")
             .with_inner_size([1100.0, 700.0]),
         ..Default::default()
     };
     eframe::run_native(
-        "sa-forge-console",
+        "sa-forge-signer-console",
         options,
         Box::new(move |cc| {
             let health = url.clone().map(|u| spawn_health(u, cc.egui_ctx.clone()));

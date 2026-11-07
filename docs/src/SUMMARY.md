@@ -21,3 +21,8 @@
 - [Plan](plan.md)
 - [Changelog](changelog.md)
 - [Local review with git-review](git-review.md)
+
+# Extras
+
+- [Apps](apps/README.md)
+  - [Console](apps/console.md)
