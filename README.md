@@ -6,179 +6,51 @@ A thin, self-hosted signer for agents that play SAGE C4 on Z.ink. The agent buil
 
 **Status:** early. Read the code before trusting it with anything.
 
-## How it works
+**Docs:** <https://ttdonovan.github.io/sa-forge-signer/>. Agents: start at [llms.txt](https://ttdonovan.github.io/sa-forge-signer/llms.txt). The site follows `main`; a release's docs are in its tag's `docs/src/`.
 
-The signer is deliberately thin: it does not decode game instructions and needs no IDL. The chain enforces what a profile key may do (scope, permission mask, expiry); the signer checks what the chain does not:
+## Before you use it
 
-1. **Chain:** the RPC's genesis hash matches Z.ink testnet, so a wrong RPC URL cannot redirect signatures.
-2. **Fee payer:** the fee payer is the signing key.
-3. **Programs:** every top-level instruction calls SAGE, Player Profile, Profile Faction, ComputeBudget, Associated Token or System (plus per-key extras).
-4. **Tokens:** SPL Token and Token-2022 are never called at the top level, even if a key lists them as extras (token movement in play happens inside SAGE). Associated Token may only create an account, naming the real System and SPL Token or Token-2022 programs (the ATA program makes whatever token program it is given the new account's owner), and only for the signing key, one of its transfer destinations, or an existing account owned by one of the cluster's built-in game programs (a character or cargo cache). A key's `extra_programs` may be called, but never count as game programs for this rule. Creating a token account pays its rent to the owner, so an arbitrary owner would be a way to move lamports out.
-5. **System Program:** only `Transfer`, and only to per-key allowed destinations. No account creation, assignment or allocation at the top level (forge-mcp creates new accounts inside the game programs).
-6. **Signers:** every required signer is the signing key or a payload partial signer, and partial signers do not exist on-chain yet.
-7. **Simulation** must succeed before anything is sent.
-8. **Limits:** a per-minute rate limit and a daily lamport cap per key, with signs serialized per key. The cap is checked against the simulation of the exact transaction about to be sent: what the key has spent or reserved in 24 h, plus this transaction's simulated spend and fee, must stay within it. A simulation that does not report the key's balance, or a missing fee estimate, is refused. The fee is quoted for the exact transaction sent, including after an approval rebuild. Each send is recorded first as an intent carrying that reservation; a spend whose outcome is not known is charged it.
-
-It then signs, sends, and polls until the transaction is confirmed, or until its blockhash is past its last valid height or 150 s pass, which end as `unknown`. Every sign request is recorded in a hash-chained audit log.
-
-## Two ways to run an agent
-
-Which keys the agent's signer holds decides what the agent can do alone and what it can lose.
-
-### Path A: the agent holds the wallet
-
-The agent's wallet is the profile authority (key index 0) and holds its assets; a SAGE-scoped session key (index 1) signs day-to-day play. The wallet key signs onboarding, deposits and withdrawals, vault funding and session-key funding.
-
-> **Caution.** On mainnet this makes the agent's wallet a hot wallet. Anything that controls the agent, including a prompt injection in content it reads, can sign as the profile authority: withdraw assets, add an attacker's key, or drain the wallet. The signer cannot see what a wallet transaction does. `wallet` keys therefore default to `confirm` (a human approves each signature on the terminal). Keep only working balances in the agent's wallet. Path A suits testnet burners; on mainnet it is a deliberate, informed choice.
-
-### Path B: the human holds the wallet
-
-The human sets up the profile, character, faction, vault and deposits with their own wallet, then grants the agent a narrow, expiring session key. The agent's signer holds only that key.
-
-> **Caution.** A session key is limited to the permissions granted, not to harmless actions. Within its mask it can spend in-game resources, spend from the profile vault and put fleets at risk. Grant the narrowest mask that covers the agent's job, a short expiry and a small ZINK balance, and deposit only what the agent should be able to lose.
-
-**Recommendation:** Path B for mainnet and anything of value; Path A for testnet.
-
-## Isolation
-
-The signer only protects anything if the agent cannot read its keys or config. Run it as a different OS user or in a container, with the key directory and config owned by that user. If the agent can read the key file, the checks are advice, not a control.
+- **Isolate it.** The signer only protects anything if the agent cannot read its keys or config. Run it as a different OS user or in a container, with the key directory and config owned by that user. If the agent can read the key file, the checks are advice, not a control.
+- **Hold the wallet yourself for anything of value.** Set up the profile with your own wallet and grant the agent a narrow, expiring session key (Path B). Letting the agent hold the wallet (Path A) suits testnet burners. See [Choosing a setup](https://ttdonovan.github.io/sa-forge-signer/setup.html).
 
 ## Install
 
-Not published on crates.io: install from GitHub, pinned to a release tag (`vX.Y.Z`). Unix only (macOS, Linux).
-
-**Prebuilt binary.** Each [release](https://github.com/ttdonovan/sa-forge-signer/releases) carries `sa-forge-signer-vX.Y.Z-<target>.tar.gz` for `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl` (static, any distribution), `aarch64-apple-darwin` and `x86_64-apple-darwin`, a `SHA256SUMS` file, and a build provenance attestation. Verify before you run it:
+Not published on crates.io. Each [release](https://github.com/ttdonovan/sa-forge-signer/releases) has prebuilt binaries for Linux (static, x86_64 and aarch64) and macOS, with checksums and a build provenance attestation; or build a release tag from source (Rust 1.89 or later):
 
 ```sh
-gh release download vX.Y.Z --repo ttdonovan/sa-forge-signer --pattern '*-aarch64-apple-darwin.tar.gz' --pattern SHA256SUMS
-shasum -a 256 -c --ignore-missing SHA256SUMS
-gh attestation verify sa-forge-signer-vX.Y.Z-aarch64-apple-darwin.tar.gz --repo ttdonovan/sa-forge-signer
-tar -xzf sa-forge-signer-vX.Y.Z-aarch64-apple-darwin.tar.gz
-```
-
-The attestation proves the archive was built by this repository's release workflow from the tag; the checksum alone only proves it matches the file next to it. The macOS binaries are not signed or notarized: a copy downloaded with a browser is quarantined by Gatekeeper (`gh` and `curl` do not set the quarantine flag).
-
-**From source.** Needs Rust 1.89 or later.
-
-```sh
-# Find the latest release tag
-git ls-remote --tags --refs --sort=-version:refname https://github.com/ttdonovan/sa-forge-signer 'v*' | head -1
-
 cargo install --locked --git https://github.com/ttdonovan/sa-forge-signer --tag vX.Y.Z
-sa-forge-signer --version
 ```
 
-Install a tag, not a branch: `main` can hold unreleased changes, and a tag is what the [changelog](https://github.com/ttdonovan/sa-forge-signer/blob/main/CHANGELOG.md) describes. `--locked` builds with the dependency versions in `Cargo.lock`, the ones CI tested and audited.
+[Install and update](https://ttdonovan.github.io/sa-forge-signer/install.html) covers verifying a binary, finding the latest tag, and updating.
 
-**Updates.** Compare `sa-forge-signer --version` (or `cargo install --list`, which shows the installed tag) with the latest tag, read the [changelog](https://github.com/ttdonovan/sa-forge-signer/blob/main/CHANGELOG.md) for anything breaking, then download and verify the new release's binary, or run the same `cargo install` with the new tag (it replaces the installed binary). To be notified of new versions, watch the repository on GitHub for releases only (Watch, Custom, Releases), or subscribe to `https://github.com/ttdonovan/sa-forge-signer/releases.atom`. A running `serve` keeps the old binary until it is restarted.
-
-To build from a clone instead, `cargo build --release --locked` uses the toolchain pinned in `rust-toolchain.toml`.
-
-## Use
+## Quick start
 
 ```sh
 # Generate a key; prints only the pubkey and a config snippet
 sa-forge-signer key new alice-session --class session
 
-# Configure it (see config.example.toml), then grant it on the profile with
+# Configure it, then grant it on the profile with
 # forge-mcp build_add_profile_key, signed by the profile authority.
 
 sa-forge-signer check payload.json                  # checks + simulation, never signs
 sa-forge-signer sign --intent "scan round" payload.json
-sa-forge-signer key show alice-session
-sa-forge-signer key fund alice-session --zink 0.05 --from alice-wallet --out fund.json
-sa-forge-signer key destroy alice-session
-sa-forge-signer audit verify
+sa-forge-signer serve                               # HTTP and MCP on 127.0.0.1:8790
 ```
-
-The config lives at `~/.config/sa-forge-signer/config.toml` unless `--config` or `SA_FORGE_SIGNER_CONFIG` says otherwise. The key is chosen by `--key`, or by matching the payload's fee payer.
-
-`check` and `sign` print one JSON report (`outcome`, `signature`, `slot`, `explorer`, `detail`, `failed_check`, `program_error`, `error`, `checks`, `compute_units`, `fee`, `balance_change`, `summary`, `logs`). `checks` lists the checks that passed; on a refusal `failed_check` names the one that failed. `program_error` is the program's own message from the logs, on a failed simulation or a transaction that landed with an error. For a landed transaction, `balance_change` and `fee` come from the transaction's own metadata, so parallel transactions from the same key do not skew them; for `check` they are simulated. The payload's `summary` comes from the builder and is not verified.
-
-| Outcome | Exit | Meaning | Retry? |
-|---|---|---|---|
-| `ok` | 0 | `check` passed | - |
-| `confirmed` | 0 | landed | no |
-| `refused` | 10 | a check failed | fix the payload; after `failed_check` `blockhash`, nothing was sent and a retry is safe |
-| `simulation_failed` | 11 | the program would reject it | after fixing the cause |
-| `failed` | 12 | landed with a program error | after fixing the cause |
-| `unknown` | 14 | sent but not proven landed: the blockhash expired with no status found, 150 s passed, or the RPC kept failing | only after reconciling (below) |
-
-Before anything is sent, the `blockhash` check compares the transaction's last valid height with the finalized height: a blockhash already past it can never land, whichever node reports the height (a lagging RPC node can hand out an expired blockhash). It is re-signed and simulated once with a fresh one; if that is expired too, the sign is refused and nothing is sent.
-
-Exit code 13 (`expired`) is retired. An RPC cannot prove that a transaction never landed: behind a load balancer, the finalized height and the status lookup can come from different nodes, and a node can lack history. So an expired blockhash with no status found is reported as `unknown`, with that in `detail`.
-
-**Retrying safely.** After `unknown`, an HTTP `500`, a dropped connection or a restarted service, the transaction may still have landed. Before building the action again:
-
-1. Look up the reported signature (or the `signature` of the key's last `sign-intent` entry in the audit log).
-2. Re-read the game state the action was meant to change (the fleet's state, the cargo, the balance).
-3. Retry only if the action did not happen.
-
-The per-key lock and the intent entry stop concurrent signs from racing the limits; they do not stop a caller from sending the same action twice with a new blockhash.
-
-Payloads that carry partial signers hold private keys for new accounts; `sign` deletes such a payload file once it has been sent, and never logs them.
-
-## Key lifecycle
-
-1. **Create:** `sa-forge-signer key new alice-session --class session` prints only the pubkey; add the printed `[keys.alice-session]` block to the config.
-2. **Grant:** build forge-mcp `build_add_profile_key` with that pubkey as `newKey`, scope `sage`, the narrowest permission mask and a short `expireTime`. The profile authority signs it: the human's own wallet (Path B), or the agent's `wallet` key through `sign` (Path A; it needs `confirm` or a testnet burner on `auto`).
-3. **Fund:** `sa-forge-signer key fund alice-session --zink 0.05 --from <payer> --out fund.json` builds an unsigned transfer. Path A: `sign --key alice-wallet fund.json`, with the session key listed in the wallet's `transfer_to`. Path B: pay it from the human's wallet with any Solana-compatible tool. A small balance doubles as a spending cap.
-4. **Use:** `sign` with the key. A missing or too narrow grant fails the simulation with the program's error.
-5. **Revoke:** build `build_remove_profile_key`, signed by the profile authority, then `sa-forge-signer key destroy alice-session`. `destroy` zeroes and deletes the key file, and refuses while the key still holds ZINK unless you pass `--abandon-balance`. The on-chain expiry is the backstop if revocation is forgotten.
-
-## Serve
-
-`sa-forge-signer serve` runs the signer as a long-lived service, so each signature skips process start-up and keys stay loaded in one isolated place. It listens on `[serve] listen` (default `127.0.0.1:8790`):
-
-- `POST /v1/check` and `POST /v1/sign`: body `{"payload": <payload object>, "key": "optional", "intent": "optional"}`; the reply is the same JSON report as the CLI. `4xx` means a request or auth problem, `500` that the signer could not finish (see `error`).
-- `POST /mcp`: MCP (JSON responses, no streaming) with tools `check`, `sign` and `key_show`.
-- `GET /health`: no auth, for health checks.
-
-Every other route needs `Authorization: Bearer <token>`. Create a token with `sa-forge-signer token new <name> --out <file>`: it writes the token to a new 0600 file and prints only its sha256 for `[[serve.tokens]]`, which also lists the keys that token may use. Host and Origin headers must name an entry in `allowed_hosts`. `confirm` keys prompt on the service's own terminal; without one they refuse.
-
-On SIGTERM or SIGINT the service stops taking requests and lets running ones finish, for up to 220 s, then exits. A sign waits up to 150 s for an outcome, and the poll that crosses that deadline can make four more RPC calls of up to 15 s each. Give it a stop grace period of at least 230 s (for example `docker stop -t 230`, or `TimeoutStopSec=230`). That covers the usual case, not every case: the checks before sending also call the RPC, and a stalled RPC can stretch them. A sign cut off by the stop has already recorded its intent; a client that loses the connection during `sign` must treat it as `unknown` and reconcile before retrying.
-
-MCP clients pass the payload object from the forge-mcp `build_*` result unchanged, and call `check` before `sign`. In a 15-payload test every payload arrived byte-exact, but the model re-types each one, so each costs its tokens twice and any partial-signer secret appears twice in the transcript.
-
-Add it to Claude Code with `claude mcp add --transport http signer http://127.0.0.1:8790/mcp --header "Authorization: Bearer $(cat <file>)"`.
-
-## Run in Docker
-
-The `Dockerfile` builds a small non-root image (uid 10001) with base images pinned by digest. It holds no keys or config; mount them at run time:
-
-| Mount | Path in the container | Notes |
-|---|---|---|
-| config | `/etc/sa-forge-signer/config.toml` (read-only) | set `key_dir = "/run/keys"` and `state_dir = "/var/lib/sa-forge-signer"`; for `serve`, `listen = "0.0.0.0:8790"` |
-| keys | `/run/keys` (read-only) | a 0700 directory of 0600 key files, readable by uid 10001; nothing else should mount it |
-| state | `/var/lib/sa-forge-signer` | the audit log; keep it across restarts |
-
-```sh
-docker build -t sa-forge-signer .
-
-# One-shot: check or sign a payload from stdin
-docker run --rm -i --read-only --cap-drop ALL \
-  -v "$PWD/config.toml:/etc/sa-forge-signer/config.toml:ro" -v "$PWD/keys:/run/keys:ro" \
-  -v "$PWD/state:/var/lib/sa-forge-signer" sa-forge-signer check - < payload.json
-
-# Service (the default command): publish on loopback only; allow at least 230 s to stop so signs drain
-docker run -d --name sa-forge-signer --read-only --cap-drop ALL --stop-timeout 230 \
-  -p 127.0.0.1:8790:8790 \
-  -v "$PWD/config.toml:/etc/sa-forge-signer/config.toml:ro" -v "$PWD/keys:/run/keys:ro" \
-  -v "$PWD/state:/var/lib/sa-forge-signer" sa-forge-signer
-```
-
-The signer talks only to the RPC in `rpc_url` (by default Z.ink testnet). An agent can use a forge-mcp running anywhere, local or hosted: only unsigned payloads travel to the signer, and the keys never leave this container. The isolation rule still applies: the agent must not be able to read the keys directory or the config.
 
 ## Docs
 
-The docs are also a book for people and agents, built with [mdBook](https://rust-lang.github.io/mdBook/) and [mdbook-llms](https://github.com/ttdonovan/mdbook-llms). Install the tools once, from GitHub, with `just docs-setup`:
-
-```sh
-cargo install --locked mdbook --version 0.5.2
-cargo install --locked --git https://github.com/ttdonovan/mdbook-llms --tag v0.4.0
-```
-
-Then `just docs` builds it into `target/docs/html/`, `just docs-serve` opens it in a browser, and `just docs-check` fails on a broken link or an empty chapter. Agents: read `target/docs/html/llms.txt` first, an index of every chapter with a line on each, then only the chapters a task needs. The book's sources are in `docs/src/`; each chapter includes a file from the repository, so change that file, not the chapter.
+| Chapter | For |
+|---|---|
+| [How it works](https://ttdonovan.github.io/sa-forge-signer/how-it-works.html) | The checks it runs before signing, and what it leaves to the chain |
+| [Install and update](https://ttdonovan.github.io/sa-forge-signer/install.html) | Verified binaries, building from a tag, checking for updates |
+| [Choosing a setup](https://ttdonovan.github.io/sa-forge-signer/setup.html) | Who holds the wallet, what each setup can lose, isolation |
+| [Checking and signing](https://ttdonovan.github.io/sa-forge-signer/check-and-sign.html) | The CLI, the JSON report, outcomes and exit codes, retrying safely |
+| [Key lifecycle](https://ttdonovan.github.io/sa-forge-signer/key-lifecycle.html) | Create, grant, fund, use, revoke |
+| [Configuration](https://ttdonovan.github.io/sa-forge-signer/configuration.html) | The annotated example config |
+| [Serving over HTTP and MCP](https://ttdonovan.github.io/sa-forge-signer/serve.html) | `serve`, tokens, shutdown, adding it to Claude Code |
+| [Running in Docker](https://ttdonovan.github.io/sa-forge-signer/docker.html) | The image and its mounts |
+| [Security](https://ttdonovan.github.io/sa-forge-signer/security.html) | Threat model, limits, reporting a vulnerability |
+| [Contributing](https://ttdonovan.github.io/sa-forge-signer/contributing.html) | The check gate, commits, releases |
 
 ## License
 
