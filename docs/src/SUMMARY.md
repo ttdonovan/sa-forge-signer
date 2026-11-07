@@ -6,6 +6,7 @@
 
 - [How it works](how-it-works.md)
 - [Install and update](install.md)
+- [Getting started](getting-started.md)
 - [Choosing a setup](setup.md)
 - [Checking and signing](check-and-sign.md)
 - [Key lifecycle](key-lifecycle.md)
@@ -21,3 +22,8 @@
 - [Plan](plan.md)
 - [Changelog](changelog.md)
 - [Local review with git-review](git-review.md)
+
+# Extras
+
+- [Apps](apps/README.md)
+  - [Console](apps/console.md)

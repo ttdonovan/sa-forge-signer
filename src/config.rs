@@ -1,4 +1,8 @@
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
+use std::fs::{DirBuilder, OpenOptions};
+use std::io::Write as _;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
@@ -7,6 +11,7 @@ use serde::Deserialize;
 use solana_address::Address;
 
 use crate::cluster::{self, Cluster};
+use crate::keystore::KeyStore;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
@@ -21,6 +26,36 @@ pub enum Approval {
     Auto,
     Confirm,
     Deny,
+}
+
+impl KeyClass {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Session => "session",
+            Self::Wallet => "wallet",
+        }
+    }
+}
+
+impl Approval {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Confirm => "confirm",
+            Self::Deny => "deny",
+        }
+    }
+}
+
+/// Lamports as ZINK (9 decimals), trailing zeros trimmed.
+fn zink(lamports: u64) -> String {
+    const PER_ZINK: u64 = 1_000_000_000;
+    let whole = lamports.checked_div(PER_ZINK).unwrap_or(0);
+    let frac = lamports.checked_rem(PER_ZINK).unwrap_or(0);
+    if frac == 0 {
+        return whole.to_string();
+    }
+    format!("{whole}.{}", format!("{frac:09}").trim_end_matches('0'))
 }
 
 #[derive(Debug, Deserialize)]
@@ -138,6 +173,29 @@ pub fn valid_key_name(name: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
 }
 
+/// The annotated example, written by `config init`. It loads as is, with no keys.
+pub const EXAMPLE: &str = include_str!("../config.example.toml");
+
+/// Writes [`EXAMPLE`] to `path` as a new 0600 file, creating its directory (0700) if needed.
+pub fn init(path: &Path) -> Result<()> {
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)
+            .with_context(|| format!("creating {}", dir.display()))?;
+    }
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .with_context(|| format!("creating {} (it may already exist)", path.display()))?;
+    file.write_all(EXAMPLE.as_bytes())?;
+    file.sync_all()?;
+    Ok(())
+}
+
 /// Default config path: `$SA_FORGE_SIGNER_CONFIG`, else `~/.config/sa-forge-signer/config.toml`.
 pub fn default_path() -> Result<PathBuf> {
     if let Some(p) = std::env::var_os("SA_FORGE_SIGNER_CONFIG") {
@@ -222,6 +280,82 @@ impl Config {
             state_dir: resolve(raw.state_dir, "state"),
             keys,
         })
+    }
+
+    /// The config as the signer resolves it, defaults filled in, for `config show`. Token hashes
+    /// are left out. Reads no key material: a key file is only checked for existence.
+    pub fn describe(&self, path: &Path) -> String {
+        let list = |v: &[Address]| {
+            if v.is_empty() {
+                "-".to_owned()
+            } else {
+                v.iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
+        };
+        let store = KeyStore::new(&self.key_dir);
+        let mut s = format!(
+            "config:    {}\ncluster:   {}\nrpc_url:   {}\nkey_dir:   {}\nstate_dir: {}\n",
+            path.display(),
+            self.cluster.name,
+            self.rpc_url,
+            self.key_dir.display(),
+            self.state_dir.display()
+        );
+        if self.keys.is_empty() {
+            s.push_str(
+                "\nkeys: none (add one with `key new`, or `key import` for an existing keypair file)\n",
+            );
+        }
+        for k in &self.keys {
+            let _ = write!(
+                s,
+                "\n[keys.{}]\n  pubkey:         {}\n  class:          {}\n  approval:       {}\n  key file:       {}\n  profile:        {}\n  rate limit:     {} per minute\n  daily cap:      {} lamports ({} ZINK)\n  transfer_to:    {}\n  extra_programs: {}\n",
+                k.name,
+                k.pubkey,
+                k.class.as_str(),
+                k.approval.as_str(),
+                if store.has(&k.name) {
+                    "present"
+                } else {
+                    "missing"
+                },
+                k.profile.map_or_else(|| "-".to_owned(), |p| p.to_string()),
+                k.rate_limit_per_minute,
+                k.daily_lamport_cap,
+                zink(k.daily_lamport_cap),
+                list(&k.transfer_to),
+                list(&k.extra_programs),
+            );
+            if k.allow_unattended {
+                s.push_str("  allow_unattended: true (throwaway testnet keys only)\n");
+            }
+        }
+        match &self.serve {
+            None => s.push_str("\nserve: not configured\n"),
+            Some(sv) => {
+                let _ = write!(
+                    s,
+                    "\n[serve]\n  listen:         {}\n  allowed_hosts:  {}\n",
+                    sv.listen,
+                    sv.allowed_hosts.join(", ")
+                );
+                if sv.tokens.is_empty() {
+                    s.push_str("  tokens:         none (`serve` refuses to start)\n");
+                }
+                for t in &sv.tokens {
+                    let _ = writeln!(
+                        s,
+                        "  token:          {} (keys: {})",
+                        t.name,
+                        t.keys.join(", ")
+                    );
+                }
+            }
+        }
+        s
     }
 
     pub fn key(&self, name: &str) -> Result<&KeyConfig> {
@@ -399,6 +533,53 @@ mod tests {
                 "C4FACQA1PpNRKrjQ2862ABNR42DTz7EzGj1uhTNFASwP",
             ]
         );
+    }
+
+    #[test]
+    fn the_example_loads_with_no_keys() {
+        let c = parse(EXAMPLE).unwrap();
+        assert!(c.keys.is_empty());
+        assert!(c.serve.is_none());
+    }
+
+    #[test]
+    fn init_writes_a_private_file_once() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("sa-forge-signer-init-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("nested/config.toml");
+        init(&path).unwrap();
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(mode(path.parent().unwrap()), 0o700);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), EXAMPLE);
+        assert!(init(&path).is_err(), "never overwrites");
+        assert!(Config::load(&path, true).unwrap().keys.is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn describe_fills_in_defaults_and_hides_token_hashes() {
+        let hash = "a".repeat(64);
+        let c = parse(&format!(
+            "[keys.w]\nclass = \"wallet\"\npubkey = \"{KEY}\"\n[keys.s]\nclass = \"session\"\npubkey = \"{KEY}\"\n[serve]\n[[serve.tokens]]\nname = \"agent\"\nsha256 = \"{hash}\"\nkeys = [\"s\"]\n"
+        ))
+        .unwrap();
+        let out = c.describe(Path::new("/cfg/config.toml"));
+        for want in [
+            "key_dir:   /cfg/keys",
+            "[keys.w]",
+            "approval:       confirm",
+            "approval:       auto",
+            "key file:       missing",
+            "rate limit:     30 per minute",
+            "daily cap:      50000000 lamports (0.05 ZINK)",
+            "listen:         127.0.0.1:8790",
+            "token:          agent (keys: s)",
+        ] {
+            assert!(out.contains(want), "missing {want:?} in\n{out}");
+        }
+        assert!(!out.contains(&hash));
     }
 
     #[test]

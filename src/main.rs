@@ -65,6 +65,17 @@ enum Command {
     /// Manage bearer tokens for `serve`
     #[command(subcommand)]
     Token(TokenCommand),
+    /// Create or show the config
+    #[command(subcommand)]
+    Config(ConfigCommand),
+}
+
+#[derive(Subcommand)]
+enum ConfigCommand {
+    /// Write the annotated example config (no keys) to the config path; refuses to overwrite
+    Init,
+    /// Print the config as the signer resolves it, with defaults filled in; never reads key material
+    Show,
 }
 
 #[derive(Subcommand)]
@@ -85,6 +96,15 @@ enum KeyCommand {
         name: String,
         #[arg(long, value_enum)]
         class: KeyClass,
+    },
+    /// Copy an existing Solana CLI keypair file into the key store; prints only its pubkey and a config snippet
+    Import {
+        name: String,
+        #[arg(long, value_enum)]
+        class: KeyClass,
+        /// The keypair file (a JSON array of 64 bytes); left unchanged
+        #[arg(long)]
+        from: PathBuf,
     },
     /// Show a configured key's pubkey, class, approval and balance
     Show { name: String },
@@ -156,6 +176,19 @@ fn run(cli: Cli) -> Result<ExitCode> {
             )?)
         }
         Command::Key(cmd) => key_command(&path, cmd),
+        Command::Config(ConfigCommand::Init) => {
+            config::init(&path)?;
+            println!("{}", path.display());
+            eprintln!(
+                "\nWrote the example config to {}. Next, add each key and paste the block it prints:\n  sa-forge-signer key new <name> --class session\n  sa-forge-signer key import <name> --class session --from <keypair.json>   (a key you already have)\nthen check it with:\n  sa-forge-signer config show",
+                path.display()
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Config(ConfigCommand::Show) => {
+            print!("{}", Config::load(&path, true)?.describe(&path));
+            Ok(ExitCode::SUCCESS)
+        }
         Command::Serve => serve::run(Config::load(&path, true)?).map(|()| ExitCode::SUCCESS),
         Command::Token(TokenCommand::New { name, out }) => {
             let hash = keystore::create_token(&out)?;
@@ -198,17 +231,10 @@ fn key_command(path: &std::path::Path, cmd: KeyCommand) -> Result<ExitCode> {
         KeyCommand::New { name, class } => {
             let cfg = Config::load(path, false)?;
             let pubkey = KeyStore::new(&cfg.key_dir).create(&name)?;
-            let class = match class {
-                KeyClass::Session => "session",
-                KeyClass::Wallet => "wallet",
-            };
-            println!("{pubkey}");
-            eprintln!(
-                "\nAdd to {}:\n\n[keys.{name}]\nclass = \"{class}\"\npubkey = \"{pubkey}\"",
-                path.display()
-            );
+            new_key_snippet(path, &name, class, &pubkey);
             Ok(ExitCode::SUCCESS)
         }
+        KeyCommand::Import { name, class, from } => key_import(path, &name, class, &from),
         KeyCommand::Fund {
             name,
             zink,
@@ -289,6 +315,41 @@ fn key_command(path: &std::path::Path, cmd: KeyCommand) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
     }
+}
+
+fn key_import(
+    path: &std::path::Path,
+    name: &str,
+    class: KeyClass,
+    from: &std::path::Path,
+) -> Result<ExitCode> {
+    let cfg = Config::load(path, false)?;
+    let (pubkey, written) = KeyStore::new(&cfg.key_dir).import(name, from)?;
+    if written {
+        eprintln!(
+            "Imported {} as {name}; the original is unchanged, delete it when you no longer need it.",
+            from.display()
+        );
+    } else {
+        eprintln!("{name} already holds this key; nothing was written.");
+    }
+    new_key_snippet(path, name, class, &pubkey);
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Prints a new key's pubkey, and the config block to add for it on stderr.
+fn new_key_snippet(
+    path: &std::path::Path,
+    name: &str,
+    class: KeyClass,
+    pubkey: &impl std::fmt::Display,
+) {
+    println!("{pubkey}");
+    eprintln!(
+        "\nAdd to {}:\n\n[keys.{name}]\nclass = \"{}\"\npubkey = \"{pubkey}\"",
+        path.display(),
+        class.as_str()
+    );
 }
 
 fn report(r: &engine::Report) -> Result<ExitCode> {

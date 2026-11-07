@@ -18,7 +18,7 @@ A thin, self-hosted signer for agents that play SAGE C4 on Z.ink. The agent buil
 Not published on crates.io. Each [release](https://github.com/ttdonovan/sa-forge-signer/releases) has prebuilt binaries for Linux (static, x86_64 and aarch64) and macOS, with checksums and a build provenance attestation; or build a release tag from source (Rust 1.89 or later):
 
 ```sh
-cargo install --locked --git https://github.com/ttdonovan/sa-forge-signer --tag vX.Y.Z
+cargo install --locked --git https://github.com/ttdonovan/sa-forge-signer --tag vX.Y.Z sa-forge-signer
 ```
 
 [Install and update](https://ttdonovan.github.io/sa-forge-signer/install.html) covers verifying a binary, finding the latest tag, and updating.
@@ -26,11 +26,14 @@ cargo install --locked --git https://github.com/ttdonovan/sa-forge-signer --tag 
 ## Quick start
 
 ```sh
+# Write the annotated example config to ~/.config/sa-forge-signer/config.toml
+sa-forge-signer config init
+
 # Generate a key; prints only the pubkey and a config snippet
 sa-forge-signer key new alice-session --class session
 
-# Configure it, then grant it on the profile with
-# forge-mcp build_add_profile_key, signed by the profile authority.
+# Paste that snippet into the config (check it with `sa-forge-signer config show`), then grant
+# the key on the profile with forge-mcp build_add_profile_key, signed by the profile authority.
 
 sa-forge-signer check payload.json                  # checks + simulation, never signs
 sa-forge-signer sign --intent "scan round" payload.json
@@ -43,6 +46,7 @@ sa-forge-signer serve                               # HTTP and MCP on 127.0.0.1:
 |---|---|
 | [How it works](https://ttdonovan.github.io/sa-forge-signer/how-it-works.html) | The checks it runs before signing, and what it leaves to the chain |
 | [Install and update](https://ttdonovan.github.io/sa-forge-signer/install.html) | Verified binaries, building from a tag, checking for updates |
+| [Getting started](https://ttdonovan.github.io/sa-forge-signer/getting-started.html) | From install to an agent signing over MCP, with the full config for each setup |
 | [Choosing a setup](https://ttdonovan.github.io/sa-forge-signer/setup.html) | Who holds the wallet, what each setup can lose, isolation |
 | [Checking and signing](https://ttdonovan.github.io/sa-forge-signer/check-and-sign.html) | The CLI, the JSON report, outcomes and exit codes, retrying safely |
 | [Key lifecycle](https://ttdonovan.github.io/sa-forge-signer/key-lifecycle.html) | Create, grant, fund, use, revoke |

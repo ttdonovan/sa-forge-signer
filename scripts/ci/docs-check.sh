@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# `just docs-check`: build docs/ and fail on an error or warning, an empty chapter, or a broken link.
+# `just docs check`: build docs/ and fail on an error or warning, an empty chapter, or a broken link.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 

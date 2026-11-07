@@ -13,6 +13,7 @@ Work tracked in this repository. Update it in the same change as the work it tra
 ## Backlog
 
 - **`check` previews the sign-only checks:** today `check` skips the rate limit, the daily cap and approval, so a clean `check` can still be refused by `sign`. Evaluate the limits (they only read the audit log) and refuse a `deny` key in `check` too, and note in the report when a `confirm` key would need a human to approve.
+- **Approval outside the terminal:** `confirm` reads `/dev/tty`, which an agent running as the terminal's user can type into through a multiplexer or a terminal app's scripting API, and which `serve` in a container usually lacks. Move approval to a channel that checks who answers, such as a Unix socket that accepts only a configured approver uid (peer credentials), so `confirm` keys also work under `serve`.
 - **`serve` thread cap:** one thread per request is unbounded today; cap concurrent requests and answer the rest with 503.
 - **SPL Token authority check:** refuse top-level SPL Token `Transfer` / `Approve` (and their `Checked` forms) whose authority is the signing key, using the public SPL Token instruction layout. Today such instructions pass on program id alone, so a hand-written payload could move tokens from a token account the key owns.
 - **Key stores:** an encrypted-file backend (age, passphrase at `serve` start) and macOS Keychain / Secret Service backends, for running outside a container. Check first whether a Keychain item can be isolated from other processes of the same user.

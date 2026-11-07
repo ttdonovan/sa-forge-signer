@@ -6,7 +6,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 cargo fmt --check
 cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
-shellcheck scripts/ci/*.sh scripts/git-review/*.sh
+shellcheck scripts/ci/*.sh scripts/git-review/*.sh scripts/installer/*.sh
 scripts/ci/docker-toolchain.sh
 cargo audit
 scripts/ci/crate-age.sh

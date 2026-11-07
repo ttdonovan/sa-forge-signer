@@ -7,9 +7,10 @@ cluster = "zink-testnet"
 # state_dir = "state"              # audit log
 
 # A SAGE-scoped session key (profile key index 1 or later). Signs without asking.
-[keys.alice-session]
-class = "session"
-pubkey = "REPLACE_WITH_PUBKEY_FROM_key_new"
+# Paste the block `sa-forge-signer key new <name> --class session` prints, or uncomment and fill in.
+# [keys.alice-session]
+# class = "session"
+# pubkey = "PUBKEY_FROM_key_new"
 # profile = "PROFILE_ADDRESS"
 # rate_limit_per_minute = 30
 # daily_lamport_cap = 50000000     # 0.05 ZINK

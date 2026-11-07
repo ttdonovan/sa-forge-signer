@@ -27,4 +27,4 @@ docker run -d --name sa-forge-signer --read-only --cap-drop ALL --stop-timeout 2
   -v "$PWD/state:/var/lib/sa-forge-signer" sa-forge-signer
 ```
 
-The signer talks only to the RPC in `rpc_url` (by default Z.ink testnet). An agent can use a forge-mcp running anywhere, local or hosted: only unsigned payloads travel to the signer, and the keys never leave this container. The [isolation rule](setup.md#isolation) still applies: the agent must not be able to read the keys directory or the config.
+The signer talks only to the RPC in `rpc_url` (by default Z.ink testnet). An agent can use a forge-mcp running anywhere, local or hosted: only unsigned payloads travel to the signer, and the keys never leave this container. The [isolation rule](setup.md#isolation) still applies: the agent must not be able to read the keys directory or the config, and must not be able to use Docker, which can mount them. On macOS, bind-mounted files stay owned by your macOS user, so an agent running as you can read the keys (see [Security](security.md)).

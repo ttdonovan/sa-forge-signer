@@ -33,6 +33,38 @@ impl KeyStore {
 
     /// Generates a key; refuses to overwrite. Returns only the pubkey.
     pub fn create(&self, name: &str) -> Result<Address> {
+        self.store(name, &Keypair::new())
+    }
+
+    /// Copies an existing Solana CLI keypair file into the store as `name`, leaving `from`
+    /// unchanged. Returns the pubkey and whether a file was written: importing the same keypair
+    /// again writes nothing, and a different key under `name` is refused, never overwritten.
+    pub fn import(&self, name: &str, from: &Path) -> Result<(Address, bool)> {
+        let path = self.path(name)?;
+        let meta = std::fs::symlink_metadata(from)
+            .with_context(|| format!("reading {}", from.display()))?;
+        if !meta.file_type().is_file() {
+            bail!("{} is not a regular file", from.display());
+        }
+        let text = Zeroizing::new(
+            std::fs::read_to_string(from).with_context(|| format!("reading {}", from.display()))?,
+        );
+        let keypair = parse_keypair(&text, &from.display().to_string())?;
+        if path.exists() {
+            let existing = self.load(name)?;
+            if Zeroizing::new(existing.to_bytes()) != Zeroizing::new(keypair.to_bytes()) {
+                bail!(
+                    "{} already holds a different key ({}); choose another name",
+                    path.display(),
+                    existing.pubkey()
+                );
+            }
+            return Ok((keypair.pubkey(), false));
+        }
+        Ok((self.store(name, &keypair)?, true))
+    }
+
+    fn store(&self, name: &str, keypair: &Keypair) -> Result<Address> {
         let path = self.path(name)?;
         DirBuilder::new()
             .recursive(true)
@@ -40,7 +72,6 @@ impl KeyStore {
             .create(&self.dir)
             .with_context(|| format!("creating {}", self.dir.display()))?;
         check_private(&self.dir, 0o077)?;
-        let keypair = Keypair::new();
         let bytes = Zeroizing::new(keypair.to_bytes());
         let json = Zeroizing::new(serde_json::to_string(&bytes.as_slice())?);
         let mut file = OpenOptions::new()
@@ -52,6 +83,11 @@ impl KeyStore {
         file.write_all(json.as_bytes())?;
         file.sync_all()?;
         Ok(keypair.pubkey())
+    }
+
+    /// Whether a key file exists for `name`; reads nothing.
+    pub fn has(&self, name: &str) -> bool {
+        self.path(name).is_ok_and(|p| p.exists())
     }
 
     /// Zeroes and deletes a key file.
@@ -66,13 +102,17 @@ impl KeyStore {
         let text = Zeroizing::new(
             std::fs::read_to_string(&path).with_context(|| format!("reading key {name:?}"))?,
         );
-        let bytes: Zeroizing<Vec<u8>> = Zeroizing::new(
-            serde_json::from_str(&text)
-                .with_context(|| format!("key {name:?} is not a JSON byte array"))?,
-        );
-        Keypair::try_from(bytes.as_slice())
-            .map_err(|_| anyhow::anyhow!("key {name:?} is not a 64-byte keypair"))
+        parse_keypair(&text, &format!("key {name:?}"))
     }
+}
+
+/// Parses the Solana CLI keypair format: a JSON array of 64 bytes.
+fn parse_keypair(text: &str, label: &str) -> Result<Keypair> {
+    let bytes: Zeroizing<Vec<u8>> = Zeroizing::new(
+        serde_json::from_str(text).with_context(|| format!("{label} is not a JSON byte array"))?,
+    );
+    Keypair::try_from(bytes.as_slice())
+        .map_err(|_| anyhow::anyhow!("{label} is not a 64-byte keypair"))
 }
 
 /// Overwrites the key file with zeros, then deletes it. Best effort: SSDs and backups may keep copies.
@@ -129,6 +169,51 @@ mod tests {
             std::env::temp_dir().join(format!("sa-forge-signer-test-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         d
+    }
+
+    #[test]
+    fn import_copies_a_keypair_privately_and_once() {
+        let dir = temp_dir("import");
+        let src = temp_dir("import-src");
+        std::fs::create_dir_all(&src).unwrap();
+        let kp = Keypair::new();
+        let file = src.join("id.json");
+        std::fs::write(
+            &file,
+            serde_json::to_string(&kp.to_bytes().to_vec()).unwrap(),
+        )
+        .unwrap();
+        let ks = KeyStore::new(&dir);
+        assert_eq!(ks.import("imported", &file).unwrap(), (kp.pubkey(), true));
+        assert_eq!(ks.load("imported").unwrap().pubkey(), kp.pubkey());
+        let mode = std::fs::metadata(dir.join("imported.json"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+        assert!(file.exists(), "the source is left in place");
+        assert_eq!(
+            ks.import("imported", &file).unwrap(),
+            (kp.pubkey(), false),
+            "the same key again writes nothing"
+        );
+        let other = src.join("other.json");
+        std::fs::write(
+            &other,
+            serde_json::to_string(&Keypair::new().to_bytes().to_vec()).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            ks.import("imported", &other).is_err(),
+            "never overwrites another key"
+        );
+        assert_eq!(ks.load("imported").unwrap().pubkey(), kp.pubkey());
+        std::fs::write(src.join("bad.json"), "[1,2,3]").unwrap();
+        assert!(ks.import("bad", &src.join("bad.json")).is_err());
+        assert!(!dir.join("bad.json").exists());
+        assert!(ks.import("Bad Name", &file).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+        std::fs::remove_dir_all(&src).unwrap();
     }
 
     #[test]

@@ -5,11 +5,11 @@
 - Rust, at the version pinned in `rust-toolchain.toml`
 - [just](https://github.com/casey/just)
 - [shellcheck](https://www.shellcheck.net/) and [cargo-audit](https://github.com/rustsec/rustsec/tree/main/cargo-audit), for `just check`
-- [mdBook](https://rust-lang.github.io/mdBook/) 0.5, [mdbook-mermaid](https://github.com/badboy/mdbook-mermaid) and [mdbook-llms](https://github.com/ttdonovan/mdbook-llms), for the docs: `just docs-setup` installs all three
+- [mdBook](https://rust-lang.github.io/mdBook/) 0.5, [mdbook-mermaid](https://github.com/badboy/mdbook-mermaid) and [mdbook-llms](https://github.com/ttdonovan/mdbook-llms), for the docs: `just docs setup` installs all three
 
 ## Workflow
 
-Run `just` to list recipes. Before opening a pull request, run `just check` (the same gate as CI: fmt, clippy with warnings as errors, tests, shellcheck, advisories, dependency age), and `just docs-check` if a doc changed. Keep `PLAN.md` in step with the work it tracks.
+Run `just` to list recipes. Before opening a pull request, run `just check` (the same gate as CI: fmt, clippy with warnings as errors, tests, shellcheck, advisories, dependency age), and `just docs check` if a doc changed. Keep `PLAN.md` in step with the work it tracks.
 
 ## Commits
 
@@ -44,5 +44,5 @@ Releases are made by [release-plz](https://release-plz.dev/) from the commit mes
 Install a release from its tag:
 
 ```sh
-cargo install --locked --git https://github.com/ttdonovan/sa-forge-signer --tag vX.Y.Z
+cargo install --locked --git https://github.com/ttdonovan/sa-forge-signer --tag vX.Y.Z sa-forge-signer
 ```
