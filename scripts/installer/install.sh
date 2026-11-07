@@ -22,6 +22,7 @@ Installs or updates sa-forge-signer and sa-forge-signer-console from a release t
   --skip-attestation     Check only SHA256SUMS, not the build provenance (no gh needed)
   --force                Reinstall even if the installed version matches; with --uninstall,
                          remove the signer even though key files remain
+  --no-alias             Do not link sfs to sa-forge-signer in the same directory
   --uninstall            Remove both binaries from the prefix. Never touches the config, keys or
                          audit log; refuses to remove the signer while key files remain
   -h, --help             Show this help
@@ -47,6 +48,7 @@ console_ref=""
 attest=1
 force=0
 uninstall=0
+alias=1
 while [ $# -gt 0 ]; do
     case "$1" in
         --tag) tag="${2:?--tag needs a value}"; shift 2 ;;
@@ -58,6 +60,7 @@ while [ $# -gt 0 ]; do
         --skip-attestation) attest=0; shift ;;
         --force) force=1; shift ;;
         --uninstall) uninstall=1; shift ;;
+        --no-alias) alias=0; shift ;;
         -h | --help) usage; exit 0 ;;
         *) die "unknown option: $1 (see --help)" ;;
     esac
@@ -142,6 +145,34 @@ key_dir() {
     case "$kd" in /*) printf '%s' "$kd" ;; *) printf '%s/%s' "$dir" "$kd" ;; esac
 }
 
+# Links sfs -> sa-forge-signer beside it; never replaces an sfs that is not that link.
+link_alias() {
+    [ "$alias" = 1 ] || return 0
+    local link="$bin/sfs" found
+    if [ -L "$link" ] && [ "$(readlink "$link")" = sa-forge-signer ]; then
+        :
+    elif [ -e "$link" ] || [ -L "$link" ]; then
+        say "not linking sfs: $link already exists"
+        return 0
+    else
+        ln -s sa-forge-signer "$link"
+        say "linked sfs -> sa-forge-signer"
+    fi
+    found="$(command -v sfs || true)"
+    if [ -n "$found" ] && [ "$found" != "$link" ]; then
+        say "note: $found comes first on PATH, so sfs runs that, not sa-forge-signer"
+    fi
+}
+
+# Removes the sfs link only if it is the one link_alias made.
+unlink_alias() {
+    local link="$bin/sfs"
+    if [ -L "$link" ] && [ "$(readlink "$link")" = sa-forge-signer ]; then
+        rm -f "$link"
+        say "removed sfs"
+    fi
+}
+
 remove() { # remove <package>: through cargo if cargo installed it, else the file
     if have cargo && cargo install --list --root "$prefix" 2>/dev/null | grep -q "^$1 "; then
         cargo uninstall --root "$prefix" "$1"
@@ -173,6 +204,7 @@ if [ "$uninstall" = 1 ]; then
             die "kept sa-forge-signer: key destroy needs it; run the steps above, then --uninstall again (or add --force)"
         fi
     fi
+    unlink_alias
     remove sa-forge-signer
     exit 0
 fi
@@ -192,6 +224,7 @@ if [ "$from_checkout" = 1 ]; then
     say "building from $root ($(git -C "$root" describe --tags --always --dirty 2>/dev/null || echo "not a git checkout")), installing into $bin"
     cargo install --locked --force --path "$root" --root "$prefix"
     say "installed $("$bin/sa-forge-signer" --version)"
+    link_alias
     if [ "$console" = 1 ]; then
         if [ -f "$root/apps/console/Cargo.toml" ]; then
             cargo install --locked --force --path "$root/apps/console" --root "$prefix"
@@ -223,6 +256,7 @@ else
     fi
     say "installed $("$bin/sa-forge-signer" --version)${current:+ (was $current)}"
 fi
+link_alias
 
 if [ "$console" = 1 ]; then
     if [ -n "$console_ref" ]; then
