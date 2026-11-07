@@ -9,7 +9,7 @@ One binary crate; each module's `//!` comment is the authority if this page drif
 | Module | Owns |
 |---|---|
 | `main.rs` | The CLI (`check`, `sign`, `key`, `token`, `audit`, `serve`) and exit codes |
-| `config.rs` | Loading and validating `config.toml`: keys, classes, approval, limits, serve tokens |
+| `config.rs` | Loading and validating `config.toml`: keys, classes, approval, limits, serve tokens; `config init` and `config show` |
 | `cluster.rs` | Built-in cluster profiles: genesis hash, default RPC, explorer, and the programs any key may call |
 | `payload.rs` | The forge-mcp `build_*` payload (version 1): an instruction list, not a serialized transaction |
 | `transfer.rs` | Funding payloads: a plain System Program transfer in the same shape forge-mcp returns |

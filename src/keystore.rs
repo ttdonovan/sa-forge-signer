@@ -54,6 +54,11 @@ impl KeyStore {
         Ok(keypair.pubkey())
     }
 
+    /// Whether a key file exists for `name`; reads nothing.
+    pub fn has(&self, name: &str) -> bool {
+        self.path(name).is_ok_and(|p| p.exists())
+    }
+
     /// Zeroes and deletes a key file.
     pub fn destroy(&self, name: &str) -> Result<()> {
         destroy_file(&self.path(name)?)

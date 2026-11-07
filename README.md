@@ -26,11 +26,14 @@ cargo install --locked --git https://github.com/ttdonovan/sa-forge-signer --tag 
 ## Quick start
 
 ```sh
+# Write the annotated example config to ~/.config/sa-forge-signer/config.toml
+sa-forge-signer config init
+
 # Generate a key; prints only the pubkey and a config snippet
 sa-forge-signer key new alice-session --class session
 
-# Configure it, then grant it on the profile with
-# forge-mcp build_add_profile_key, signed by the profile authority.
+# Paste that snippet into the config (check it with `sa-forge-signer config show`), then grant
+# the key on the profile with forge-mcp build_add_profile_key, signed by the profile authority.
 
 sa-forge-signer check payload.json                  # checks + simulation, never signs
 sa-forge-signer sign --intent "scan round" payload.json

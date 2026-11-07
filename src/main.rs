@@ -65,6 +65,17 @@ enum Command {
     /// Manage bearer tokens for `serve`
     #[command(subcommand)]
     Token(TokenCommand),
+    /// Create or show the config
+    #[command(subcommand)]
+    Config(ConfigCommand),
+}
+
+#[derive(Subcommand)]
+enum ConfigCommand {
+    /// Write the annotated example config (no keys) to the config path; refuses to overwrite
+    Init,
+    /// Print the config as the signer resolves it, with defaults filled in; never reads key material
+    Show,
 }
 
 #[derive(Subcommand)]
@@ -156,6 +167,19 @@ fn run(cli: Cli) -> Result<ExitCode> {
             )?)
         }
         Command::Key(cmd) => key_command(&path, cmd),
+        Command::Config(ConfigCommand::Init) => {
+            config::init(&path)?;
+            println!("{}", path.display());
+            eprintln!(
+                "\nWrote the example config to {}. Next:\n  sa-forge-signer key new <name> --class session   and paste the block it prints\n  sa-forge-signer config show",
+                path.display()
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Config(ConfigCommand::Show) => {
+            print!("{}", Config::load(&path, true)?.describe(&path));
+            Ok(ExitCode::SUCCESS)
+        }
         Command::Serve => serve::run(Config::load(&path, true)?).map(|()| ExitCode::SUCCESS),
         Command::Token(TokenCommand::New { name, out }) => {
             let hash = keystore::create_token(&out)?;
@@ -198,10 +222,7 @@ fn key_command(path: &std::path::Path, cmd: KeyCommand) -> Result<ExitCode> {
         KeyCommand::New { name, class } => {
             let cfg = Config::load(path, false)?;
             let pubkey = KeyStore::new(&cfg.key_dir).create(&name)?;
-            let class = match class {
-                KeyClass::Session => "session",
-                KeyClass::Wallet => "wallet",
-            };
+            let class = class.as_str();
             println!("{pubkey}");
             eprintln!(
                 "\nAdd to {}:\n\n[keys.{name}]\nclass = \"{class}\"\npubkey = \"{pubkey}\"",
