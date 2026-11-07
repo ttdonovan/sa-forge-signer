@@ -4,7 +4,7 @@ The mdBook that is the signer's documentation, built for agents first: `llms.txt
 
 ## Where to edit
 
-- Chapters live in `docs/src/`: using the signer at the top level, working on it in `docs/src/dev/` (contributing, code map, plan, changelog, git-review), and apps in `docs/src/apps/`. A chapter that is only frontmatter plus `{{#include ...}}` of a repository file (security, and contributing, plan, changelog and git-review in `dev/`) is written in that file: edit the file, never the wrapper or anything in `target/`. An include path is relative to the chapter, so it gains a `../` per folder level.
+- Chapters live in `docs/src/`: using the signer at the top level, working on it in `docs/src/dev/` (contributing, code map, plan, changelog, git-review, and these rules for `docs/` and `apps/`), and apps in `docs/src/apps/`. A chapter that is only frontmatter plus an mdBook `#include` of a repository file (security; contributing, plan, changelog, git-review, writing-docs and apps in `dev/`) is written in that file: edit the file, never the wrapper or anything in `target/`. An include path is relative to the chapter, so it gains a `../` per folder level. Never write the include directive itself, with its double braces, in a file the book includes: mdBook runs it.
 - `README.md` at the repository root is a short front page linking to the published book, not a chapter.
 - Apps under `apps/` are documented in `docs/src/apps/`, listed under `# Extras` at the bottom of `SUMMARY.md`: a chapter per app, plus a row in `docs/src/apps/README.md`.
 

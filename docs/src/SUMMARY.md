@@ -22,6 +22,8 @@
 - [Plan](dev/plan.md)
 - [Changelog](dev/changelog.md)
 - [Local review with git-review](dev/git-review.md)
+- [Writing the docs](dev/writing-docs.md)
+- [Building an app](dev/apps.md)
 
 # Extras
 
