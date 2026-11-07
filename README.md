@@ -46,6 +46,7 @@ sa-forge-signer serve                               # HTTP and MCP on 127.0.0.1:
 |---|---|
 | [How it works](https://ttdonovan.github.io/sa-forge-signer/how-it-works.html) | The checks it runs before signing, and what it leaves to the chain |
 | [Install and update](https://ttdonovan.github.io/sa-forge-signer/install.html) | Verified binaries, building from a tag, checking for updates |
+| [Getting started](https://ttdonovan.github.io/sa-forge-signer/getting-started.html) | From install to an agent signing over MCP, with the full config for each setup |
 | [Choosing a setup](https://ttdonovan.github.io/sa-forge-signer/setup.html) | Who holds the wallet, what each setup can lose, isolation |
 | [Checking and signing](https://ttdonovan.github.io/sa-forge-signer/check-and-sign.html) | The CLI, the JSON report, outcomes and exit codes, retrying safely |
 | [Key lifecycle](https://ttdonovan.github.io/sa-forge-signer/key-lifecycle.html) | Create, grant, fund, use, revoke |

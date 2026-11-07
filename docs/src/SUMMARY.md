@@ -6,6 +6,7 @@
 
 - [How it works](how-it-works.md)
 - [Install and update](install.md)
+- [Getting started](getting-started.md)
 - [Choosing a setup](setup.md)
 - [Checking and signing](check-and-sign.md)
 - [Key lifecycle](key-lifecycle.md)
