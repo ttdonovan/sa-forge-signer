@@ -4,7 +4,7 @@ description: "sa-forge-signer-console: a read-only desktop view of serve health,
 
 # Console
 
-`sa-forge-signer-console` is a desktop window (egui) for watching a signer. It reads the signer's audit log and config and polls `serve`'s `/health`; it never writes, locks, signs or approves anything. It is an early spike in `apps/console/`.
+`sa-forge-signer-console` is a desktop window, built with [GPUI Kit](https://gpui-kit.com), for watching a signer. It reads the signer's audit log and config and polls `serve`'s `/health`; it never writes, locks, signs or approves anything. It is an early spike in `apps/console/`. It always uses its own dark theme, whatever the system appearance, with the [Tomorrow](https://fonts.google.com/specimen/Tomorrow) font for headings and labels (bundled in `apps/console/assets/fonts/` under the SIL Open Font License 1.1, `OFL.txt` beside it). Building it needs Rust 1.95 or later; on macOS, macOS 15 or later and the Xcode Command Line Tools (`xcode-select --install`).
 
 ```sh
 just apps console                                   # the signer's default config
@@ -19,11 +19,14 @@ just apps console --config ./config.toml --state-dir ./state --url http://127.0.
 
 ## What it shows
 
-- **Status bar:** `serve` up or down, the audit log's hash chain (intact, or the first line that breaks it), and how many sends are unresolved.
-- **Keys:** each key's class and approval, signs in the last minute against its rate limit, and ZINK spent or reserved in 24 h against its daily cap, as the signer computes them (see [How it works](../how-it-works.md)). Click a key to filter the log.
-- **Audit log:** newest first. Unresolved sends (an orphan intent, or an `unknown` outcome) are highlighted; reconcile them before retrying (see [Retrying safely](../check-and-sign.md#retrying-safely)). Click a row for every field of the entry.
+- **Status bar:** `serve` up or down, the audit log's hash chain (intact, or the first line that breaks it), how many sends are unresolved, and how long ago the last entry was written.
+- **Keys:** each key's class, approval and pubkey (with a copy button and an explorer link), its last activity, and two bars: signs in the last minute against its rate limit, and ZINK spent or reserved in 24 h against its daily cap, as the signer computes them (see [How it works](../how-it-works.md)). A bar turns amber at 80% and red at the limit. Click a key to filter the log by it; the key column is hidden while one key is shown.
+- **Audit log:** newest first, one row per signature: the `sign-intent` the signer writes before sending is merged into the `sign` entry with its outcome. An intent with no outcome stays as its own row, marked unresolved, as is an `unknown` or `expired` outcome; reconcile them before retrying (see [Retrying safely](../check-and-sign.md#retrying-safely)). Each row shows its balance change in ZINK, the intent the agent gave, then the builder's summary with addresses shortened (`GwDE…dFvg`). Rows that arrive while the console is open are highlighted for a few seconds. The filter box matches intent, summary, key, signature and outcome. "raw entries" shows every audit entry as the hash chain stores it, with its command.
+- **Detail:** click a row for a side panel: what was signed (intent, summary, programs), the result (times in UTC, signature, slot, balance change and the reserved spend in ZINK), and the hashes that tie it into the chain. Signatures, programs and slots have a copy button and link to the block explorer in the config's `explorer_url` (by default `https://explorer.z.ink`; see [Configuration](../configuration.md#settings)).
 
-It re-reads `audit.jsonl` about once a second when its size or modification time changes, and skips a last line still being written. The config supplies key classes, approval and limits; a key that appears only in the log is shown with the default limits. The config holds no secrets, only token hashes.
+**Keys:** with the log focused, ↑ and ↓ move through the rows; `/` jumps to the filter box, and Esc leaves it or closes the detail panel. Cmd-Q quits.
+
+It re-reads `audit.jsonl` about twice a second when its size or modification time changes, and skips a last line still being written. The config supplies key classes, approval and limits; a key that appears only in the log is shown with the default limits. The config holds no secrets, only token hashes.
 
 ## Access
 
@@ -43,6 +46,8 @@ On macOS with Docker Desktop, files the container writes to a bind mount belong 
 
 ## Working on it
 
-The crate has its own workspace and lockfile, so its dependency tree (winit, glow and the rest) stays out of the signer's gate. `just apps console-check` runs its fmt, clippy, tests, `cargo audit` and the 7-day dependency age; CI does not run it.
+The crate has its own workspace and lockfile, so its dependency tree (GPUI and the rest) stays out of the signer's gate. `just apps console-check` runs its fmt, clippy, tests, `cargo audit` and the 7-day dependency age; CI does not run it.
+
+Changing the UI: GPUI Kit's guides and docs, and how to read them, are in [Building an app](../dev/apps.md); its Claude skills can be installed with `just apps gpui-kit-skills` (optional; see [GPUI Kit skills](../appendix/gpui-kit-skills.md)).
 
 `src/log.rs` mirrors the signer's audit `Entry` (`src/audit.rs`) and `limits` (`src/engine.rs`). Change them together: a test parses lines written by the signer (`tests/fixtures/signer-audit.jsonl`), so a change to the signer's `Entry` fails it rather than silently breaking the chain check.

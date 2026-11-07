@@ -14,4 +14,9 @@ console *args:
 # The console's own gate: fmt, clippy (warnings are errors), tests, advisories, dependency age
 console-check:
     cd {{ source_directory() }}/console && cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked && cargo audit
-    {{ source_directory() }}/../scripts/ci/crate-age.sh {{ source_directory() }}/console/Cargo.lock
+    ALLOW_YOUNG_PREFIXES="gpui-kit gpui-base gpui-component gpui-pre" {{ source_directory() }}/../scripts/ci/crate-age.sh {{ source_directory() }}/console/Cargo.lock
+
+# Install GPUI Kit's Claude skills at the console's gpui-kit version (default ~/.claude/skills; --project, --uninstall)
+[positional-arguments]
+gpui-kit-skills *args:
+    {{ source_directory() }}/../scripts/skills/gpui-kit.sh "$@"

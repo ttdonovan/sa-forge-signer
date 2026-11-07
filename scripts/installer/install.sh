@@ -28,7 +28,7 @@ Installs or updates sa-forge-signer and sa-forge-signer-console from a release t
   -h, --help             Show this help
 
 The prebuilt signer is verified against SHA256SUMS and its build provenance attestation (needs gh).
-The console has no prebuilt binary; it is built with cargo (Rust 1.95 or later).
+The console has no prebuilt binary; it is built with cargo (Rust 1.95 or later; on macOS, macOS 15+ and the Xcode Command Line Tools).
 EOF
 }
 

@@ -1,7 +1,7 @@
 //! Read-only view of the signer's audit log: parse, verify the hash chain, and per-key usage.
 //! Mirrors `src/audit.rs` and `limits` in `src/engine.rs`; change them together.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 use std::path::Path;
 
@@ -126,6 +126,38 @@ impl Snapshot {
         }
     }
 
+    /// One row per signature: a `sign` entry merged with the `sign-intent` before it (same key and
+    /// signature). An intent with no `sign` stays a row of its own; so does every other entry.
+    /// Oldest first.
+    pub fn rows(&self) -> Vec<Row> {
+        let intents: HashMap<(&str, &str), usize> = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.command == SIGN_INTENT)
+            .filter_map(|(i, e)| Some(((e.key.as_str(), e.signature.as_deref()?), i)))
+            .collect();
+        let mut merged = HashSet::new();
+        let mut rows: Vec<Row> = self
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(i, e)| {
+                let intent = (e.command == "sign")
+                    .then(|| intents.get(&(e.key.as_str(), e.signature.as_deref()?)))
+                    .flatten()
+                    .copied()
+                    .filter(|&j| j < i);
+                if let Some(j) = intent {
+                    merged.insert(j);
+                }
+                Row { entry: i, intent }
+            })
+            .collect();
+        rows.retain(|r| !merged.contains(&r.entry));
+        rows
+    }
+
     /// Key names in order of first appearance.
     pub fn keys(&self) -> Vec<String> {
         let mut seen = Vec::<String>::new();
@@ -184,6 +216,13 @@ impl Snapshot {
             unresolved,
         }
     }
+}
+
+/// A row of the log view: an entry, and the `sign-intent` merged into it, as indexes into `entries`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Row {
+    pub entry: usize,
+    pub intent: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -257,6 +296,28 @@ mod tests {
         text.push_str("{\"ts\":");
         let s = Snapshot::parse(&text);
         assert_eq!((s.entries.len(), s.chain), (1, Chain::Ok));
+    }
+
+    #[test]
+    fn merges_each_sign_with_its_intent() {
+        let mut other_key = entry(5, "sign", "confirmed", "c", None);
+        other_key.key = "other".into();
+        let s = Snapshot::parse(&chain(vec![
+            entry(1, SIGN_INTENT, "pending", "a", Some(-10)),
+            entry(2, SIGN_INTENT, "pending", "b", Some(-10)),
+            entry(3, "sign", "confirmed", "a", Some(-5)),
+            // Orphan: no final entry, stays its own row.
+            entry(4, SIGN_INTENT, "pending", "c", Some(-10)),
+            // Same signature under another key: not merged.
+            other_key,
+            entry(6, "sign", "unknown", "b", None),
+        ]));
+        let rows: Vec<(usize, Option<usize>)> =
+            s.rows().iter().map(|r| (r.entry, r.intent)).collect();
+        assert_eq!(rows, [(2, Some(0)), (3, None), (4, None), (5, Some(1))]);
+        // A refused sign never wrote an intent.
+        let refused = Snapshot::parse(include_str!("../tests/fixtures/signer-audit.jsonl"));
+        assert_eq!(refused.rows().len(), 2);
     }
 
     #[test]

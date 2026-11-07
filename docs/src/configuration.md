@@ -16,6 +16,7 @@ Only `class` and `pubkey` on each key, and a token for `serve`, have to be set; 
 |---|---|---|
 | `cluster` | `"zink-testnet"` | never: it is the only cluster |
 | `rpc_url` | the cluster's public RPC (`https://rpc1.z.ink`) | you use another RPC you trust ([Security](security.md)) |
+| `explorer_url` | the cluster's explorer (`https://explorer.z.ink`) | you prefer another block explorer. Used only for links: the `explorer` field of a `sign` report and the [console](apps/console.md)'s links; the signer never calls it |
 | `key_dir` | `keys`, beside the config | keys live elsewhere (in Docker, `/run/keys`) |
 | `state_dir` | `state`, beside the config | the audit log lives elsewhere (in Docker, `/var/lib/sa-forge-signer`) |
 | `[keys.<name>] class` | required | `"session"` for a SAGE-scoped profile key, `"wallet"` for the profile authority |

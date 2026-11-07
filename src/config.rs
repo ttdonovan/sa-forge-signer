@@ -64,6 +64,7 @@ struct RawConfig {
     #[serde(default = "default_cluster")]
     cluster: String,
     rpc_url: Option<String>,
+    explorer_url: Option<String>,
     key_dir: Option<PathBuf>,
     state_dir: Option<PathBuf>,
     #[serde(default)]
@@ -137,6 +138,8 @@ pub struct KeyConfig {
 pub struct Config {
     pub cluster: &'static Cluster,
     pub rpc_url: String,
+    /// Block explorer base URL, without a trailing slash: links only, the signer never calls it.
+    pub explorer_url: String,
     pub key_dir: PathBuf,
     pub state_dir: PathBuf,
     pub keys: Vec<KeyConfig>,
@@ -270,12 +273,20 @@ impl Config {
             if p.is_absolute() { p } else { base.join(p) }
         };
         let serve = raw.serve.map(|s| serve_from_raw(s, &keys)).transpose()?;
+        let explorer_url = raw.explorer_url.map_or_else(
+            || cluster.explorer.to_owned(),
+            |u| u.trim_end_matches('/').to_owned(),
+        );
+        if !(explorer_url.starts_with("https://") || explorer_url.starts_with("http://")) {
+            bail!("explorer_url {explorer_url:?}: must start with https:// or http://");
+        }
         Ok(Self {
             serve,
             cluster,
             rpc_url: raw
                 .rpc_url
                 .unwrap_or_else(|| cluster.default_rpc.to_owned()),
+            explorer_url,
             key_dir: resolve(raw.key_dir, "keys"),
             state_dir: resolve(raw.state_dir, "state"),
             keys,
@@ -297,10 +308,11 @@ impl Config {
         };
         let store = KeyStore::new(&self.key_dir);
         let mut s = format!(
-            "config:    {}\ncluster:   {}\nrpc_url:   {}\nkey_dir:   {}\nstate_dir: {}\n",
+            "config:    {}\ncluster:   {}\nrpc_url:   {}\nexplorer:  {}\nkey_dir:   {}\nstate_dir: {}\n",
             path.display(),
             self.cluster.name,
             self.rpc_url,
+            self.explorer_url,
             self.key_dir.display(),
             self.state_dir.display()
         );
@@ -567,6 +579,7 @@ mod tests {
         .unwrap();
         let out = c.describe(Path::new("/cfg/config.toml"));
         for want in [
+            "explorer:  https://explorer.z.ink\n",
             "key_dir:   /cfg/keys",
             "[keys.w]",
             "approval:       confirm",
@@ -586,6 +599,13 @@ mod tests {
     fn rejects_unknown_cluster_and_fields() {
         assert!(parse("cluster = \"mainnet\"").is_err());
         assert!(parse("rpc = \"x\"").is_err());
+        assert!(parse("explorer_url = \"explorer.z.ink\"").is_err());
+        assert_eq!(
+            parse("explorer_url = \"https://x.example/\"")
+                .unwrap()
+                .explorer_url,
+            "https://x.example"
+        );
         assert!(
             parse(&format!(
                 "[keys.Bad]\nclass = \"session\"\npubkey = \"{KEY}\""
