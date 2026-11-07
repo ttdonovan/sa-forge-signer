@@ -2,8 +2,25 @@
 //! play.staratlas.com (panels, gold) and z.ink (green, teal, red), with GitHub dark's text colours.
 //! Colours only, no branding.
 
+use std::borrow::Cow;
+
 use gpui_kit::component::{Theme, ThemeMode};
 use gpui_kit::{App, Hsla, px, rgb};
+
+/// Headings and labels: Tomorrow (SIL OFL 1.1, `assets/fonts/OFL.txt`), as z.ink uses.
+pub const LABEL_FONT: &str = "Tomorrow";
+
+/// Registers the bundled Tomorrow weights. On failure labels fall back to the system font.
+pub fn load_fonts(cx: &App) {
+    let fonts = vec![
+        Cow::Borrowed(include_bytes!("../assets/fonts/Tomorrow-Regular.ttf").as_slice()),
+        Cow::Borrowed(include_bytes!("../assets/fonts/Tomorrow-Medium.ttf").as_slice()),
+        Cow::Borrowed(include_bytes!("../assets/fonts/Tomorrow-SemiBold.ttf").as_slice()),
+    ];
+    if let Err(e) = cx.text_system().add_fonts(fonts) {
+        eprintln!("warning: loading the Tomorrow font: {e:#}");
+    }
+}
 
 /// Window and deepest surfaces.
 pub const BG: u32 = 0x0014_131a;

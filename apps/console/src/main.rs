@@ -113,6 +113,7 @@ fn main() {
         .with_assets(gpui_kit::assets::Assets)
         .run(move |cx| {
             gpui_kit::init(cx);
+            theme::load_fonts(cx);
             theme::apply(cx);
             // GPUI leaves quitting to the app: Cmd-Q, the menu, and closing the only window.
             cx.on_action(|_: &Quit, cx| cx.quit());

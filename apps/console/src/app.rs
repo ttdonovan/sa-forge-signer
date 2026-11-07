@@ -131,6 +131,23 @@ impl TableDelegate for LogTable {
             .unwrap_or_else(|| Column::new("none", ""))
     }
 
+    fn render_th(
+        &mut self,
+        col_ix: usize,
+        _: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> impl IntoElement {
+        label()
+            .size_full()
+            .text_color(cx.theme().muted_foreground)
+            .child(
+                self.columns
+                    .get(col_ix)
+                    .map(|c| c.name.to_uppercase())
+                    .unwrap_or_default(),
+            )
+    }
+
     fn render_tr(
         &mut self,
         row_ix: usize,
@@ -602,7 +619,12 @@ impl Console {
                 };
                 this.rebuild(cx);
             }))
-            .child(div().font_semibold().child(k.name.clone()))
+            .child(
+                div()
+                    .font_family(theme::LABEL_FONT)
+                    .font_semibold()
+                    .child(k.name.clone()),
+            )
             .child(
                 div()
                     .text_xs()
@@ -732,6 +754,7 @@ impl Console {
                         .child(
                             div()
                                 .text_xl()
+                                .font_family(theme::LABEL_FONT)
                                 .font_semibold()
                                 .text_color(Tone::of(e, unresolved).color(cx))
                                 .child(outcome_label(e, unresolved)),
@@ -930,8 +953,7 @@ fn section(title: &str, fields: Vec<AnyElement>, t: &Theme) -> impl IntoElement 
 
 /// A small uppercase teal label, the HUD's panel and section heading.
 fn heading(text: &str) -> Div {
-    div()
-        .text_xs()
+    label()
         .font_semibold()
         .text_color(theme::c(theme::TEAL))
         .child(text.to_uppercase())
@@ -943,12 +965,16 @@ fn chip(label: &str, value: String, color: Hsla, t: &Theme) -> impl IntoElement 
         .gap_2()
         .child(dot(color))
         .child(
-            div()
-                .text_xs()
+            self::label()
                 .text_color(t.muted_foreground)
                 .child(label.to_uppercase()),
         )
         .child(div().text_color(color).child(value))
+}
+
+/// Small text in the label font: headings, field names, the status bar's labels.
+fn label() -> Div {
+    div().font_family(theme::LABEL_FONT).text_xs()
 }
 
 fn dot(color: Hsla) -> Div {
@@ -959,8 +985,7 @@ fn dot(color: Hsla) -> Div {
 fn text_field(name: &str, value: &str, t: &Theme) -> AnyElement {
     v_flex()
         .child(
-            div()
-                .text_xs()
+            label()
                 .text_color(t.muted_foreground)
                 .child(name.to_owned()),
         )
@@ -977,10 +1002,11 @@ fn id_field(
     url: Option<String>,
     t: &Theme,
 ) -> AnyElement {
-    let header = h_flex()
-        .gap_2()
-        .text_xs()
-        .child(div().text_color(t.muted_foreground).child(name.to_owned()));
+    let header = h_flex().gap_2().text_xs().child(
+        label()
+            .text_color(t.muted_foreground)
+            .child(name.to_owned()),
+    );
     let header = match url {
         Some(u) => header
             .child(Clipboard::new(("copy", id.1)).value(value.to_owned()))
