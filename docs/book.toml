@@ -12,11 +12,8 @@ build-dir = "../target/docs"
 
 [output.html]
 git-repository-url = "https://github.com/ttdonovan/sa-forge-signer"
-site-url = "/sa-forge-signer/"
 
 [output.llms]
-# Absolute links, as llms.txt asks; a local build's files sit beside it too
-site-url = "https://ttdonovan.github.io/sa-forge-signer/"
 sizes = true
 preamble = "llms-preamble.md"
 
