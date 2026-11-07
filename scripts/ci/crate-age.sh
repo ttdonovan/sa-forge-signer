@@ -11,6 +11,18 @@ cutoff=$((now - min_days * 86400))
 # "name version" pairs allowed younger than min_days, each with its reason; remove once old enough.
 # rustls 0.23.46: RUSTSEC-2026-0346..0349 (owner's exception, 2026-10-18; 7 days old on 2026-10-21).
 exceptions=("rustls 0.23.46")
+# ALLOW_YOUNG_PREFIXES: space-separated crate families (a name, or the name plus "-...") allowed at any
+# age. Set only by a caller that accepts it, such as an app's gate; never by the signer's.
+read -r -a young_prefixes <<<"${ALLOW_YOUNG_PREFIXES:-}"
+
+# allowed_family <name>: whether name is in one of young_prefixes.
+allowed_family() {
+    local p
+    for p in "${young_prefixes[@]}"; do
+        [[ "$1" == "$p" || "$1" == "$p"-* ]] && return 0
+    done
+    return 1
+}
 
 # index_path <name>: the sparse index path for a crate name.
 index_path() {
@@ -46,6 +58,10 @@ while read -r name version; do
     if [ "$published" -gt "$cutoff" ]; then
         if [[ " ${exceptions[*]/%/,} " == *" $name $version, "* ]]; then
             printf 'allowed: %s %s published %s (an exception)\n' "$name" "$version" "$pubtime"
+            continue
+        fi
+        if allowed_family "$name"; then
+            printf 'allowed: %s %s published %s (ALLOW_YOUNG_PREFIXES)\n' "$name" "$version" "$pubtime"
             continue
         fi
         age=$(((now - published) / 86400))
