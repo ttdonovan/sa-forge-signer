@@ -7,6 +7,8 @@ description = "A thin, self-hosted signer for agents playing SAGE C4 on Z.ink. U
 license = "Unlicense OR MIT"
 repository = "https://github.com/ttdonovan/sa-forge-signer"
 publish = false
+# Only these files make up the crate, so release-plz ignores CI and docs-only changes
+include = ["/src/**/*.rs", "/README.md", "/CHANGELOG.md", "/config.example.toml", "/LICENSE-MIT", "/UNLICENSE", "/COPYING"]
 
 [dependencies]
 anyhow = "1.0.104"
