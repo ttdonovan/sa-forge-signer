@@ -146,6 +146,17 @@ docker run -d --name sa-forge-signer --read-only --cap-drop ALL --stop-timeout 2
 
 The signer talks only to the RPC in `rpc_url` (by default Z.ink testnet). An agent can use a forge-mcp running anywhere, local or hosted: only unsigned payloads travel to the signer, and the keys never leave this container. The isolation rule still applies: the agent must not be able to read the keys directory or the config.
 
+## Docs
+
+The docs are also a book for people and agents, built with [mdBook](https://rust-lang.github.io/mdBook/) and [mdbook-llms](https://github.com/ttdonovan/mdbook-llms). Install the tools once, from GitHub, with `just docs-setup`:
+
+```sh
+cargo install --locked mdbook --version 0.5.2
+cargo install --locked --git https://github.com/ttdonovan/mdbook-llms --tag v0.4.0
+```
+
+Then `just docs` builds it into `target/docs/html/`, `just docs-serve` opens it in a browser, and `just docs-check` fails on a broken link or an empty chapter. Agents: read `target/docs/html/llms.txt` first, an index of every chapter with a line on each, then only the chapters a task needs. The book's sources are in `docs/src/`; each chapter includes a file from the repository, so change that file, not the chapter.
+
 ## License
 
-Dual-licensed under the [Unlicense](UNLICENSE) or [MIT](LICENSE-MIT), at your option. Contributions are accepted under the same terms (see [COPYING](COPYING)).
+Dual-licensed under the [Unlicense](https://github.com/ttdonovan/sa-forge-signer/blob/main/UNLICENSE) or [MIT](https://github.com/ttdonovan/sa-forge-signer/blob/main/LICENSE-MIT), at your option. Contributions are accepted under the same terms (see [COPYING](https://github.com/ttdonovan/sa-forge-signer/blob/main/COPYING)).

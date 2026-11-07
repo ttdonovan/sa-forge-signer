@@ -1,0 +1,16 @@
+# The repository's docs as a book, for people and agents: `just docs` writes the HTML site
+# with llms.txt, llms-full.txt and each chapter's Markdown beside it, in target/docs/html/.
+[book]
+title = "sa-forge-signer"
+description = "A thin, self-hosted signer for agents playing SAGE C4 on Z.ink: what it checks, how to run it, its threat model, and how to work on it. Unofficial."
+src = "src"
+
+[build]
+build-dir = "../target/docs"
+
+[preprocessor.strip-frontmatter]
+
+[output.html]
+git-repository-url = "https://github.com/ttdonovan/sa-forge-signer"
+
+[output.llms]

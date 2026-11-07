@@ -1,0 +1,5 @@
+[workspace]
+# Not on crates.io: versions come from git tags (vX.Y.Z), and cargo publish is skipped
+git_only = true
+# Release only when the release PR is merged
+release_always = false
