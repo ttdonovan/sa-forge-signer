@@ -17,11 +17,11 @@
 
 # Working on it
 
-- [Contributing](contributing.md)
-- [Code map](code-map.md)
-- [Plan](plan.md)
-- [Changelog](changelog.md)
-- [Local review with git-review](git-review.md)
+- [Contributing](dev/contributing.md)
+- [Code map](dev/code-map.md)
+- [Plan](dev/plan.md)
+- [Changelog](dev/changelog.md)
+- [Local review with git-review](dev/git-review.md)
 
 # Extras
 

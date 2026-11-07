@@ -54,7 +54,7 @@ sa-forge-signer serve                               # HTTP and MCP on 127.0.0.1:
 | [Serving over HTTP and MCP](https://ttdonovan.github.io/sa-forge-signer/serve.html) | `serve`, tokens, shutdown, adding it to Claude Code |
 | [Running in Docker](https://ttdonovan.github.io/sa-forge-signer/docker.html) | The image and its mounts |
 | [Security](https://ttdonovan.github.io/sa-forge-signer/security.html) | Threat model, limits, reporting a vulnerability |
-| [Contributing](https://ttdonovan.github.io/sa-forge-signer/contributing.html) | The check gate, commits, releases |
+| [Contributing](https://ttdonovan.github.io/sa-forge-signer/dev/contributing.html) | The check gate, commits, releases |
 
 ## License
 
