@@ -13,11 +13,12 @@ Each [release](https://github.com/ttdonovan/sa-forge-signer/releases) carries `s
 ```sh
 gh release download vX.Y.Z --repo ttdonovan/sa-forge-signer --pattern '*-aarch64-apple-darwin.tar.gz' --pattern SHA256SUMS
 shasum -a 256 -c --ignore-missing SHA256SUMS
-gh attestation verify sa-forge-signer-vX.Y.Z-aarch64-apple-darwin.tar.gz --repo ttdonovan/sa-forge-signer
+gh attestation verify sa-forge-signer-vX.Y.Z-aarch64-apple-darwin.tar.gz --repo ttdonovan/sa-forge-signer \
+  --signer-workflow ttdonovan/sa-forge-signer/.github/workflows/release-binaries.yml
 tar -xzf sa-forge-signer-vX.Y.Z-aarch64-apple-darwin.tar.gz
 ```
 
-The attestation proves the archive was built by this repository's release workflow from the tag; the checksum alone only proves it matches the file next to it. The macOS binaries are not signed or notarized: a copy downloaded with a browser is quarantined by Gatekeeper (`gh` and `curl` do not set the quarantine flag).
+The attestation proves the archive was built by this repository's `release-binaries.yml` workflow, as run from `main`; that workflow checks out the tag and refuses one that does not match the version in `Cargo.toml`. The checksum alone only proves the archive matches the file next to it. The macOS binaries are not signed or notarized: a copy downloaded with a browser is quarantined by Gatekeeper (`gh` and `curl` do not set the quarantine flag).
 
 ## From source
 
