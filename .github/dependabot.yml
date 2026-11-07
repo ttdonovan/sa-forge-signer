@@ -11,9 +11,11 @@ updates:
     commit-message:
       prefix: ci
       include: scope
+    # Major bumps get their own PR
     groups:
       actions:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: cargo
     directory: /
@@ -27,3 +29,4 @@ updates:
     groups:
       cargo:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
