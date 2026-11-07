@@ -219,7 +219,9 @@ path_note() {
 
 if [ "$from_checkout" = 1 ]; then
     root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-    [ -f "$root/Cargo.toml" ] && [ -d "$root/src" ] || die "$root is not a sa-forge-signer checkout"
+    if [ ! -f "$root/Cargo.toml" ] || [ ! -d "$root/src" ]; then
+        die "$root is not a sa-forge-signer checkout"
+    fi
     have cargo || die "cargo is needed to build from the checkout (https://rustup.rs)"
     mkdir -p "$bin"
     say "building from $root ($(git -C "$root" describe --tags --always --dirty 2>/dev/null || echo "not a git checkout")), installing into $bin"
