@@ -22,7 +22,7 @@ Recipes live in `apps/justfile`, imported by the root justfile. Paths are relati
 ## A new app
 
 1. `apps/<app>/` with `Cargo.toml` (package `sa-forge-signer-<app>`, `publish = false`, `[workspace]`, the lints), `clippy.toml` and `Cargo.lock`.
-2. Recipes in `apps/justfile`.
+2. Recipes in `apps/justfile`, and a short `README.md` front page (what it is, install, run, a link to its chapter) like `apps/console/README.md`; the chapter holds everything else.
 3. A chapter at `docs/src/apps/<app>.md`, a row in `docs/src/apps/README.md`, and a line under `# Extras` in `docs/src/SUMMARY.md`; then `just docs-check` (see `docs/CLAUDE.md`).
 
 Commits use `feat:` / `fix:` as usual. release-plz builds the signer's version only from the files in the root `Cargo.toml`'s `include`, so app changes never bump `sa-forge-signer`. Installing from a tag needs the package name (`cargo install --locked --git ... --tag vX.Y.Z sa-forge-signer-<app>`).
