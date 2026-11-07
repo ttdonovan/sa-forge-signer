@@ -4,7 +4,8 @@ pub struct Cluster {
     pub name: &'static str,
     pub genesis_hash: &'static str,
     pub default_rpc: &'static str,
-    pub explorer_tx: &'static str,
+    /// Block explorer base URL; transactions are at `{explorer}/tx/{signature}`.
+    pub explorer: &'static str,
     /// Programs any key may call at the top level, as (label, address).
     pub programs: &'static [(&'static str, &'static str)],
 }
@@ -19,7 +20,7 @@ pub const ZINK_TESTNET: Cluster = Cluster {
     name: "zink-testnet",
     genesis_hash: "6qaAozzun2WV83PRDgqf79WXtbqfnezKB3demjxXV5EY",
     default_rpc: "https://rpc1.z.ink",
-    explorer_tx: "https://explorer.z.ink/tx/",
+    explorer: "https://explorer.z.ink",
     programs: &[
         ("sage", "C4SAgeKLgb3pTLWhVr6NRwWyYFuTR7ZeSXFrzoLwfMzF"),
         (

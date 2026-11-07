@@ -382,7 +382,7 @@ fn pipeline(
         balance_change: Some(0_i64.saturating_sub_unsigned(reserve)),
         ..Entry::default()
     })?;
-    let explorer = cfg.cluster.explorer_tx;
+    let explorer = &cfg.explorer_url;
     send_and_confirm(
         &rpc,
         &tx,
@@ -412,7 +412,7 @@ fn send_and_confirm(
         .map(ToString::to_string)
         .context("transaction has no signature")?;
     report.signature = Some(signature.clone());
-    report.explorer = Some(format!("{explorer}{signature}"));
+    report.explorer = Some(format!("{explorer}/tx/{signature}"));
     if let Err(e) = chain.send(&wire) {
         report.detail = Some(format!("send: {e}"));
     }
@@ -1217,7 +1217,7 @@ mod tests {
             &tx,
             100,
             blank(),
-            "x/",
+            "https://x.example",
             Duration::ZERO,
             Duration::from_millis(200),
         )
@@ -1239,6 +1239,10 @@ mod tests {
             (Some(42), Some(-5000), Some(5000))
         );
         assert!(r.signature.is_some() && r.program_error.is_none());
+        assert_eq!(
+            r.explorer,
+            r.signature.map(|s| format!("https://x.example/tx/{s}"))
+        );
     }
 
     #[test]
