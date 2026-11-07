@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install or update sa-forge-signer (verified prebuilt binary, else built from the tag) and
-# sa-forge-signer-console (built from the tag) on this host. Run with --help for options.
+# sa-forge-signer-console (built from the tag) on this host, or uninstall them. Run with --help.
 set -euo pipefail
 
 REPO="ttdonovan/sa-forge-signer"
@@ -18,7 +18,10 @@ Installs or updates sa-forge-signer and sa-forge-signer-console from a release t
   --no-console           Install only the signer
   --console-ref BRANCH   Build the console from a branch instead of the tag (for an unreleased console)
   --skip-attestation     Check only SHA256SUMS, not the build provenance (no gh needed)
-  --force                Reinstall even if the installed version matches
+  --force                Reinstall even if the installed version matches; with --uninstall,
+                         remove the signer even though key files remain
+  --uninstall            Remove both binaries from the prefix. Never touches the config, keys or
+                         audit log; refuses to remove the signer while key files remain
   -h, --help             Show this help
 
 The prebuilt signer is verified against SHA256SUMS and its build provenance attestation (needs gh).
@@ -40,6 +43,7 @@ console=1
 console_ref=""
 attest=1
 force=0
+uninstall=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --tag) tag="${2:?--tag needs a value}"; shift 2 ;;
@@ -49,6 +53,7 @@ while [ $# -gt 0 ]; do
         --console-ref) console_ref="${2:?--console-ref needs a value}"; shift 2 ;;
         --skip-attestation) attest=0; shift ;;
         --force) force=1; shift ;;
+        --uninstall) uninstall=1; shift ;;
         -h | --help) usage; exit 0 ;;
         *) die "unknown option: $1 (see --help)" ;;
     esac
@@ -119,6 +124,54 @@ cargo_install() { # cargo_install <package> <ref-args...>
     [ "$force" = 1 ] && args+=(--force)
     cargo "${args[@]}"
 }
+
+# The signer's config path, as the signer resolves it.
+config_path() { printf '%s' "${SA_FORGE_SIGNER_CONFIG:-$HOME/.config/sa-forge-signer/config.toml}"; }
+
+# The config's key_dir (top-level, before any table), resolved against the config's directory.
+key_dir() {
+    local cfg dir kd=""
+    cfg="$(config_path)"
+    dir="$(dirname "$cfg")"
+    [ -f "$cfg" ] && kd="$(awk '/^\[/ { exit } /^key_dir *=/ { sub(/^[^"]*"/, ""); sub(/".*/, ""); print }' "$cfg")"
+    kd="${kd:-keys}"
+    case "$kd" in /*) printf '%s' "$kd" ;; *) printf '%s/%s' "$dir" "$kd" ;; esac
+}
+
+remove() { # remove <package>: through cargo if cargo installed it, else the file
+    if have cargo && cargo install --list --root "$prefix" 2>/dev/null | grep -q "^$1 "; then
+        cargo uninstall --root "$prefix" "$1"
+    elif [ -e "$bin/$1" ]; then
+        rm -f "$bin/$1"
+    else
+        say "$1 is not installed in $bin"
+        return 0
+    fi
+    say "removed $1"
+}
+
+if [ "$uninstall" = 1 ]; then
+    remove sa-forge-signer-console
+    kd="$(key_dir)"
+    keys=()
+    for f in "$kd"/*.json; do
+        [ -e "$f" ] && keys+=("$(basename "$f" .json)")
+    done
+    if [ "${#keys[@]}" -gt 0 ]; then
+        say "key files remain in $kd: ${keys[*]}"
+        say "the config, keys and audit log are never removed by this script; to remove them yourself:"
+        say "  1. revoke each key's grant on-chain (forge-mcp build_remove_profile_key, signed by the profile authority)"
+        for k in "${keys[@]}"; do
+            say "  2. sa-forge-signer key destroy $k   (refuses while the key holds ZINK)"
+        done
+        say "  3. rm -r $(dirname "$(config_path)")"
+        if [ "$force" = 0 ]; then
+            die "kept sa-forge-signer: key destroy needs it; run the steps above, then --uninstall again (or add --force)"
+        fi
+    fi
+    remove sa-forge-signer
+    exit 0
+fi
 
 [ -n "$tag" ] || tag="$(latest_tag)"
 [ -n "$tag" ] || die "could not find a release tag at $URL"

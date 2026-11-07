@@ -19,6 +19,8 @@ scripts/installer/install.sh --help             # --prefix, --from-source, --con
 
 It installs binaries only. The config, keys and audit log stay in `~/.config/sa-forge-signer/` (see [Configuration](configuration.md)).
 
+`--uninstall` removes both binaries and never touches the config, keys or audit log. While key files remain it keeps the signer, which `key destroy` needs, and lists the steps to retire them (see [Key lifecycle](key-lifecycle.md)): revoke each grant, `sa-forge-signer key destroy <name>`, then remove the config directory. Run it again afterwards, or add `--force` to remove the signer anyway.
+
 ## Prebuilt binary
 
 Each [release](https://github.com/ttdonovan/sa-forge-signer/releases) carries `sa-forge-signer-vX.Y.Z-<target>.tar.gz` for `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl` (static, any distribution), `aarch64-apple-darwin` and `x86_64-apple-darwin`, a `SHA256SUMS` file, and a build provenance attestation. Verify before you run it:
