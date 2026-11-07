@@ -9,7 +9,7 @@ use egui_extras::{Column, TableBuilder};
 
 use crate::Health;
 use crate::config::{self, Config};
-use crate::log::{Chain, Entry, Snapshot};
+use crate::log::{Chain, Entry, Row, Snapshot};
 
 const POLL_EVERY: Duration = Duration::from_secs(1);
 const LAMPORTS_PER_ZINK: u64 = 1_000_000_000;
@@ -42,7 +42,9 @@ pub struct App {
     last_poll: Option<Instant>,
     filter: Option<String>,
     unresolved_only: bool,
-    /// Index into `log.entries`.
+    /// One row per audit entry instead of per signature.
+    raw: bool,
+    /// Index into `log.entries` of the selected row's entry.
     selected: Option<usize>,
 }
 
@@ -62,6 +64,7 @@ impl App {
             last_poll: None,
             filter: None,
             unresolved_only: false,
+            raw: false,
             selected: None,
         }
     }
@@ -197,35 +200,70 @@ impl App {
         }
     }
 
+    /// Rows newest first, one per signature unless `raw`, after the key and unresolved filters.
+    fn visible_rows(&self) -> Vec<Row> {
+        let rows: Vec<Row> = if self.raw {
+            (0..self.log.entries.len())
+                .map(|entry| Row {
+                    entry,
+                    intent: None,
+                })
+                .collect()
+        } else {
+            self.log.rows()
+        };
+        rows.into_iter()
+            .rev()
+            .filter(|r| {
+                self.log.entries.get(r.entry).is_some_and(|e| {
+                    self.filter.as_ref().is_none_or(|f| &e.key == f)
+                        && (!self.unresolved_only || self.log.unresolved(e))
+                })
+            })
+            .collect()
+    }
+
     fn entries_table(&mut self, ui: &mut egui::Ui, now: u64) {
         ui.horizontal(|ui| {
             ui.heading("Audit log");
             ui.checkbox(&mut self.unresolved_only, "unresolved only");
+            ui.checkbox(&mut self.raw, "raw entries")
+                .on_hover_text("One row per audit entry, as the hash chain stores them, instead of one per signature.");
             if let Some(f) = &self.filter {
                 ui.label(format!("key: {f}"));
             }
         });
-        let rows: Vec<usize> = self
-            .log
-            .entries
-            .iter()
-            .enumerate()
-            .rev()
-            .filter(|(_, e)| self.filter.as_ref().is_none_or(|f| &e.key == f))
-            .filter(|(_, e)| !self.unresolved_only || self.log.unresolved(e))
-            .map(|(i, _)| i)
-            .collect();
+        let rows = self.visible_rows();
+        if rows.is_empty() {
+            ui.add_space(24.0);
+            ui.vertical_centered(|ui| {
+                ui.weak(if self.log.entries.is_empty() {
+                    "No entries yet: the log fills as the agent checks and signs."
+                } else {
+                    "No entries match the filters."
+                });
+            });
+            return;
+        }
         let mut clicked = None;
-        TableBuilder::new(ui)
+        let mut table = TableBuilder::new(ui)
             .striped(true)
             .sense(egui::Sense::click())
             .column(Column::initial(70.0))
-            .column(Column::initial(120.0))
-            .column(Column::initial(90.0))
+            .column(Column::initial(110.0));
+        if self.raw {
+            table = table.column(Column::initial(90.0));
+        }
+        let mut titles = vec!["age", "key"];
+        if self.raw {
+            titles.push("command");
+        }
+        titles.extend(["outcome", "intent / summary"]);
+        table
             .column(Column::initial(90.0))
             .column(Column::remainder().clip(true))
             .header(20.0, |mut h| {
-                for title in ["age", "key", "command", "outcome", "summary / intent"] {
+                for title in titles {
                     h.col(|ui| {
                         ui.strong(title);
                     });
@@ -233,13 +271,13 @@ impl App {
             })
             .body(|body| {
                 body.rows(18.0, rows.len(), |mut row| {
-                    let Some(&i) = rows.get(row.index()) else {
+                    let Some(r) = rows.get(row.index()) else {
                         return;
                     };
-                    let Some(e) = self.log.entries.get(i) else {
+                    let Some(e) = self.log.entries.get(r.entry) else {
                         return;
                     };
-                    row.set_selected(self.selected == Some(i));
+                    row.set_selected(self.selected == Some(r.entry));
                     let unresolved = self.log.unresolved(e);
                     row.col(|ui| {
                         ui.label(age(now, e.ts));
@@ -247,20 +285,31 @@ impl App {
                     row.col(|ui| {
                         ui.label(&e.key);
                     });
+                    if self.raw {
+                        row.col(|ui| {
+                            ui.label(&e.command);
+                        });
+                    }
                     row.col(|ui| {
-                        ui.label(&e.command);
+                        ui.label(
+                            RichText::new(outcome_label(e, unresolved))
+                                .color(outcome_color(e, unresolved)),
+                        );
                     });
                     row.col(|ui| {
-                        ui.label(RichText::new(&e.outcome).color(outcome_color(e, unresolved)));
-                    });
-                    row.col(|ui| {
-                        ui.label(e.intent.as_ref().map_or_else(
-                            || e.summary.clone(),
-                            |intent| format!("{}  ({intent})", e.summary),
-                        ));
+                        let summary = shorten_addresses(&e.summary);
+                        match &e.intent {
+                            Some(intent) => {
+                                ui.label(intent);
+                                ui.weak(summary);
+                            }
+                            None => {
+                                ui.label(summary);
+                            }
+                        }
                     });
                     if row.response().clicked() {
-                        clicked = Some(i);
+                        clicked = Some(r.entry);
                     }
                 });
             });
@@ -273,40 +322,117 @@ impl App {
         }
     }
 
-    fn detail(&self, ui: &mut egui::Ui, e: &Entry) {
+    /// The selected row: what was signed, what happened, and the entries that record it.
+    fn detail(&mut self, ui: &mut egui::Ui, now: u64, row: Row) {
+        let Some(e) = self.log.entries.get(row.entry).cloned() else {
+            return;
+        };
+        let intent = row.intent.and_then(|i| self.log.entries.get(i)).cloned();
+        let unresolved = self.log.unresolved(&e);
+        let explorer = self.config.explorer_url.clone();
+        let link = |path: &str, value: &str| {
+            explorer
+                .as_ref()
+                .map(|base| format!("{base}/{path}/{value}"))
+        };
+        ui.horizontal(|ui| {
+            ui.heading("Entry");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .button("close")
+                    .on_hover_text("Close (click the row again)")
+                    .clicked()
+                {
+                    self.selected = None;
+                }
+            });
+        });
+        ui.label(
+            RichText::new(outcome_label(&e, unresolved))
+                .color(outcome_color(&e, unresolved))
+                .strong(),
+        );
+        if unresolved {
+            ui.label(
+                RichText::new("Sent with no known outcome: reconcile before retrying.").color(WARN),
+            );
+        }
         egui::ScrollArea::vertical().show(ui, |ui| {
-            egui::Grid::new("detail")
-                .num_columns(2)
-                .striped(true)
-                .show(ui, |ui| {
-                    let opt = |v: Option<String>| v.unwrap_or_else(|| "-".to_owned());
-                    let fields = [
-                        ("ts", e.ts.to_string()),
-                        ("key", e.key.clone()),
-                        ("command", e.command.clone()),
-                        ("outcome", e.outcome.clone()),
-                        ("unresolved", self.log.unresolved(e).to_string()),
-                        ("detail", opt(e.detail.clone())),
-                        ("signature", opt(e.signature.clone())),
-                        ("slot", opt(e.slot.map(|s| s.to_string()))),
-                        (
-                            "balance change",
-                            opt(e.balance_change.map(|d| format!("{d} lamports"))),
-                        ),
-                        ("summary (builder, unverified)", e.summary.clone()),
-                        ("intent", opt(e.intent.clone())),
-                        ("programs", e.programs.join("\n")),
-                        ("payload hash", e.payload_hash.clone()),
-                        ("hash", e.hash.clone()),
-                    ];
-                    for (name, value) in fields {
-                        ui.strong(name);
-                        ui.add(egui::Label::new(RichText::new(value).monospace()).wrap());
-                        ui.end_row();
-                    }
-                });
+            section(ui, "What", |ui| {
+                text_field(ui, "intent", e.intent.as_deref().unwrap_or("-"));
+                text_field(ui, "summary", &e.summary)
+                    .on_hover_text("Written by the payload's builder; the signer does not verify it.");
+                for p in &e.programs {
+                    id_field(ui, "program", p, link("address", p));
+                }
+            });
+            section(ui, "Result", |ui| {
+                text_field(ui, "key", &e.key);
+                if let Some(i) = &intent {
+                    text_field(ui, "sent", &when(now, i.ts));
+                }
+                text_field(ui, if intent.is_some() { "settled" } else { "time" }, &when(now, e.ts));
+                if let Some(d) = &e.detail {
+                    text_field(ui, "detail", d);
+                }
+                if let Some(sig) = &e.signature {
+                    id_field(ui, "signature", sig, link("tx", sig));
+                }
+                if let Some(slot) = e.slot {
+                    id_field(ui, "slot", &slot.to_string(), link("block", &slot.to_string()));
+                }
+                if let Some(d) = e.balance_change {
+                    text_field(ui, "balance change", &signed_zink(d));
+                }
+                if let Some(d) = intent.as_ref().and_then(|i| i.balance_change) {
+                    text_field(ui, "reserved", &signed_zink(d))
+                        .on_hover_text("The simulated spend the signer reserved against the daily cap before sending.");
+                }
+            });
+            section(ui, "Integrity", |ui| {
+                id_field(ui, "payload hash", &e.payload_hash, None);
+                id_field(ui, "entry hash", &e.hash, None);
+                id_field(ui, "previous hash", &e.prev, None);
+                if let Some(i) = &intent {
+                    id_field(ui, "intent entry hash", &i.hash, None);
+                }
+            });
         });
     }
+}
+
+/// A collapsible group of fields.
+fn section(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui)) {
+    egui::CollapsingHeader::new(RichText::new(title).strong())
+        .default_open(true)
+        .show(ui, add);
+}
+
+/// A label over a plain value: intents, summaries, times and amounts.
+fn text_field(ui: &mut egui::Ui, name: &str, value: &str) -> egui::Response {
+    ui.weak(name);
+    labelled(ui, RichText::new(value))
+}
+
+/// A label over a monospace identifier (address, signature, slot, hash); with `url`, a copy button
+/// and a link out.
+fn id_field(ui: &mut egui::Ui, name: &str, value: &str, url: Option<String>) -> egui::Response {
+    ui.horizontal(|ui| {
+        ui.weak(name);
+        if let Some(u) = url {
+            if ui.small_button("copy").clicked() {
+                ui.ctx().copy_text(value.to_owned());
+            }
+            ui.hyperlink_to("explorer ↗", u);
+        }
+    });
+    labelled(ui, RichText::new(value).monospace())
+}
+
+fn labelled(ui: &mut egui::Ui, value: RichText) -> egui::Response {
+    let r = ui.add(egui::Label::new(value).wrap());
+    ui.add_space(4.0);
+    r
 }
 
 impl eframe::App for App {
@@ -330,11 +456,21 @@ impl eframe::App for App {
             .show(ui, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| self.keys_panel(ui, now));
             });
-        if let Some(e) = self.selected.and_then(|i| self.log.entries.get(i)).cloned() {
-            egui::Panel::bottom("detail")
+        if let Some(i) = self.selected {
+            // In the merged view the selection is the final entry; find its intent.
+            let row = if self.raw {
+                None
+            } else {
+                self.log.rows().into_iter().find(|r| r.entry == i)
+            }
+            .unwrap_or(Row {
+                entry: i,
+                intent: None,
+            });
+            egui::Panel::right("detail")
                 .resizable(true)
-                .default_size(240.0)
-                .show(ui, |ui| self.detail(ui, &e));
+                .default_size(420.0)
+                .show(ui, |ui| self.detail(ui, now, row));
         }
         egui::CentralPanel::default().show(ui, |ui| self.entries_table(ui, now));
     }
@@ -349,6 +485,95 @@ fn outcome_color(e: &Entry, unresolved: bool) -> Color32 {
         "failed" | "refused" | "error" => BAD,
         _ => Color32::GRAY,
     }
+}
+
+/// What a row's outcome means: a merged sign whose intent was pending reads as its final outcome.
+fn outcome_label(e: &Entry, unresolved: bool) -> String {
+    if unresolved && e.command == crate::log::SIGN_INTENT {
+        "unresolved".to_owned()
+    } else {
+        e.outcome.clone()
+    }
+}
+
+/// UTC date and time, and the age.
+fn when(now: u64, ts: u64) -> String {
+    format!(
+        "{} UTC ({})",
+        utc(ts).unwrap_or_else(|| ts.to_string()),
+        age(now, ts)
+    )
+}
+
+/// `YYYY-MM-DD HH:MM:SS` for a unix time, by the civil-from-days algorithm (Howard Hinnant).
+fn utc(ts: u64) -> Option<String> {
+    let days = ts.checked_div(86_400)?;
+    let secs = ts.checked_rem(86_400)?;
+    let z = days.checked_add(719_468)?;
+    let era = z.checked_div(146_097)?;
+    let doe = z.checked_rem(146_097)?;
+    let yoe = doe
+        .checked_sub(doe.checked_div(1_460)?)?
+        .checked_add(doe.checked_div(36_524)?)?
+        .checked_sub(doe.checked_div(146_096)?)?
+        .checked_div(365)?;
+    let doy = doe.checked_sub(
+        yoe.checked_mul(365)?
+            .checked_add(yoe.checked_div(4)?)?
+            .checked_sub(yoe.checked_div(100)?)?,
+    )?;
+    let mp = doy.checked_mul(5)?.checked_add(2)?.checked_div(153)?;
+    let day = doy
+        .checked_sub(mp.checked_mul(153)?.checked_add(2)?.checked_div(5)?)?
+        .checked_add(1)?;
+    let month = if mp < 10 {
+        mp.checked_add(3)?
+    } else {
+        mp.checked_sub(9)?
+    };
+    let year = yoe
+        .checked_add(era.checked_mul(400)?)?
+        .checked_add(u64::from(month <= 2))?;
+    Some(format!(
+        "{year:04}-{month:02}-{day:02} {:02}:{:02}:{:02}",
+        secs.checked_div(3_600)?,
+        secs.checked_rem(3_600)?.checked_div(60)?,
+        secs.checked_rem(60)?
+    ))
+}
+
+/// Base58 runs of 32 to 44 characters (addresses, signatures are longer) shortened to `GwDE…dFvg`.
+fn shorten_addresses(text: &str) -> String {
+    const BASE58: &str = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+    let mut out = String::with_capacity(text.len());
+    let mut run = String::new();
+    let flush = |run: &mut String, out: &mut String| {
+        let n = run.chars().count();
+        if (32..=44).contains(&n) {
+            out.extend(run.chars().take(4));
+            out.push('…');
+            out.extend(run.chars().skip(n.saturating_sub(4)));
+        } else {
+            out.push_str(run);
+        }
+        run.clear();
+    };
+    for c in text.chars() {
+        if BASE58.contains(c) {
+            run.push(c);
+        } else {
+            flush(&mut run, &mut out);
+            out.push(c);
+        }
+    }
+    flush(&mut run, &mut out);
+    out
+}
+
+/// A signed lamport change as ZINK, e.g. `-0.000005 ZINK`.
+fn signed_zink(lamports: i64) -> String {
+    let sign = if lamports < 0 { "-" } else { "" };
+    format!("{sign}{} ZINK", zink(lamports.unsigned_abs()))
 }
 
 fn age(now: u64, ts: u64) -> String {
@@ -399,6 +624,25 @@ mod tests {
         assert!((fraction(5, 10) - 0.5).abs() < f32::EPSILON);
         assert!((fraction(20, 10) - 1.0).abs() < f32::EPSILON);
         assert!((fraction(1, 0) - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn formats_utc() {
+        assert_eq!(utc(0).as_deref(), Some("1970-01-01 00:00:00"));
+        assert_eq!(utc(951_782_400).as_deref(), Some("2000-02-29 00:00:00"));
+        assert_eq!(utc(1_794_087_225).as_deref(), Some("2026-11-07 21:33:45"));
+    }
+
+    #[test]
+    fn shortens_addresses_only() {
+        assert_eq!(
+            shorten_addresses(
+                "Supply fleet at GwDEHQLddZwKoHzpv3DmtJqPkgZQ8iAv27zwQVCKdFvg: load 1880 fuel"
+            ),
+            "Supply fleet at GwDE…dFvg: load 1880 fuel"
+        );
+        assert_eq!(shorten_addresses("Daily check-in"), "Daily check-in");
+        assert_eq!(signed_zink(-5_000), "-0.000005 ZINK");
     }
 
     #[test]

@@ -9,9 +9,13 @@ use serde::Deserialize;
 
 pub const DEFAULT_RATE_PER_MINUTE: u32 = 30;
 pub const DEFAULT_DAILY_LAMPORT_CAP: u64 = 50_000_000;
+/// `zink-testnet`'s explorer, from `src/cluster.rs`.
+pub const DEFAULT_EXPLORER: &str = "https://explorer.z.ink";
 
 #[derive(Debug, Default, Deserialize)]
 struct Raw {
+    cluster: Option<String>,
+    explorer_url: Option<String>,
     state_dir: Option<PathBuf>,
     #[serde(default)]
     keys: BTreeMap<String, RawKey>,
@@ -46,6 +50,8 @@ pub struct Config {
     pub keys: Vec<Key>,
     /// `[serve] listen`, when the config has a `[serve]` table.
     pub listen: Option<String>,
+    /// Block explorer base URL without a trailing slash; none for a cluster the console does not know.
+    pub explorer_url: Option<String>,
 }
 
 /// `$SA_FORGE_SIGNER_CONFIG`, else `~/.config/sa-forge-signer/config.toml`, as the signer does.
@@ -92,6 +98,13 @@ impl Config {
                 base.join(state_dir)
             }),
             keys,
+            explorer_url: raw
+                .explorer_url
+                .map(|u| u.trim_end_matches('/').to_owned())
+                .or_else(|| {
+                    matches!(raw.cluster.as_deref(), None | Some("zink-testnet"))
+                        .then(|| DEFAULT_EXPLORER.to_owned())
+                }),
             listen: raw
                 .serve
                 .map(|s| s.listen.unwrap_or_else(|| "127.0.0.1:8790".to_owned())),
