@@ -22,7 +22,7 @@ Installs or updates sa-forge-signer and sa-forge-signer-console from a release t
   --skip-attestation     Check only SHA256SUMS, not the build provenance (no gh needed)
   --force                Reinstall even if the installed version matches; with --uninstall,
                          remove the signer even though key files remain
-  --no-alias             Do not link sfs to sa-forge-signer in the same directory
+  --no-alias             Do not link sfs and sfs-console to the binaries in the same directory
   --uninstall            Remove both binaries from the prefix. Never touches the config, keys or
                          audit log; refuses to remove the signer while key files remain
   -h, --help             Show this help
@@ -145,31 +145,31 @@ key_dir() {
     case "$kd" in /*) printf '%s' "$kd" ;; *) printf '%s/%s' "$dir" "$kd" ;; esac
 }
 
-# Links sfs -> sa-forge-signer beside it; never replaces an sfs that is not that link.
+# link_alias <link> <target>: links bin/link -> target; never replaces a link or file it did not make.
 link_alias() {
-    [ "$alias" = 1 ] || return 0
-    local link="$bin/sfs" found
-    if [ -L "$link" ] && [ "$(readlink "$link")" = sa-forge-signer ]; then
+    [ "$alias" = 1 ] && [ -e "$bin/$2" ] || return 0
+    local link="$bin/$1" found
+    if [ -L "$link" ] && [ "$(readlink "$link")" = "$2" ]; then
         :
     elif [ -e "$link" ] || [ -L "$link" ]; then
-        say "not linking sfs: $link already exists"
+        say "not linking $1: $link already exists"
         return 0
     else
-        ln -s sa-forge-signer "$link"
-        say "linked sfs -> sa-forge-signer"
+        ln -s "$2" "$link"
+        say "linked $1 -> $2"
     fi
-    found="$(command -v sfs || true)"
+    found="$(command -v "$1" || true)"
     if [ -n "$found" ] && [ "$found" != "$link" ]; then
-        say "note: $found comes first on PATH, so sfs runs that, not sa-forge-signer"
+        say "note: $found comes first on PATH, so $1 runs that, not $2"
     fi
 }
 
-# Removes the sfs link only if it is the one link_alias made.
+# unlink_alias <link> <target>: removes bin/link only if it is the link link_alias made.
 unlink_alias() {
-    local link="$bin/sfs"
-    if [ -L "$link" ] && [ "$(readlink "$link")" = sa-forge-signer ]; then
+    local link="$bin/$1"
+    if [ -L "$link" ] && [ "$(readlink "$link")" = "$2" ]; then
         rm -f "$link"
-        say "removed sfs"
+        say "removed $1"
     fi
 }
 
@@ -186,6 +186,7 @@ remove() { # remove <package>: through cargo if cargo installed it, else the fil
 }
 
 if [ "$uninstall" = 1 ]; then
+    unlink_alias sfs-console sa-forge-signer-console
     remove sa-forge-signer-console
     kd="$(key_dir)"
     keys=()
@@ -204,7 +205,7 @@ if [ "$uninstall" = 1 ]; then
             die "kept sa-forge-signer: key destroy needs it; run the steps above, then --uninstall again (or add --force)"
         fi
     fi
-    unlink_alias
+    unlink_alias sfs sa-forge-signer
     remove sa-forge-signer
     exit 0
 fi
@@ -224,11 +225,12 @@ if [ "$from_checkout" = 1 ]; then
     say "building from $root ($(git -C "$root" describe --tags --always --dirty 2>/dev/null || echo "not a git checkout")), installing into $bin"
     cargo install --locked --force --path "$root" --root "$prefix"
     say "installed $("$bin/sa-forge-signer" --version)"
-    link_alias
+    link_alias sfs sa-forge-signer
     if [ "$console" = 1 ]; then
         if [ -f "$root/apps/console/Cargo.toml" ]; then
             cargo install --locked --force --path "$root/apps/console" --root "$prefix"
             say "installed sa-forge-signer-console"
+            link_alias sfs-console sa-forge-signer-console
         else
             say "skipping the console: this checkout does not include it"
         fi
@@ -256,7 +258,7 @@ else
     fi
     say "installed $("$bin/sa-forge-signer" --version)${current:+ (was $current)}"
 fi
-link_alias
+link_alias sfs sa-forge-signer
 
 if [ "$console" = 1 ]; then
     if [ -n "$console_ref" ]; then
@@ -267,6 +269,7 @@ if [ "$console" = 1 ]; then
     else
         say "skipping the console: $tag does not include it (pass --console-ref <branch> to build an unreleased one)"
     fi
+    link_alias sfs-console sa-forge-signer-console
 fi
 
 path_note

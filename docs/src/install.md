@@ -8,7 +8,7 @@ Not published on crates.io: install from GitHub, pinned to a release tag (`vX.Y.
 
 ## Install script
 
-[`scripts/installer/install.sh`](../../scripts/installer/install.sh) installs or updates the signer and the [console](apps/console.md) on the host it runs on, into `~/.local/bin` by default. It downloads the prebuilt signer for the host and verifies it as below (the attestation needs `gh`), or builds it from the tag with cargo when there is no prebuilt binary for the host. It builds the console with cargo from the same tag, and skips it for a tag that does not include it. It also links `sfs` to `sa-forge-signer` in the same directory (`--no-alias` skips it), and never replaces an `sfs` that is something else. Run it again to update: it skips a signer that is already at that version.
+[`scripts/installer/install.sh`](../../scripts/installer/install.sh) installs or updates the signer and the [console](apps/console.md) on the host it runs on, into `~/.local/bin` by default. It downloads the prebuilt signer for the host and verifies it as below (the attestation needs `gh`), or builds it from the tag with cargo when there is no prebuilt binary for the host. It builds the console with cargo from the same tag, and skips it for a tag that does not include it. It also links `sfs` to `sa-forge-signer` and `sfs-console` to `sa-forge-signer-console` in the same directory (`--no-alias` skips them), and never replaces an existing file or link of those names. Run it again to update: it skips a signer that is already at that version.
 
 ```sh
 # From a checkout, or download the script from the tag you want and read it first
@@ -20,7 +20,7 @@ scripts/installer/install.sh --help             # --prefix, --from-source, --con
 
 It installs binaries only. The config, keys and audit log stay in `~/.config/sa-forge-signer/` (see [Configuration](configuration.md)).
 
-`--uninstall` removes both binaries and the `sfs` link, and never touches the config, keys or audit log. While key files remain it keeps the signer, which `key destroy` needs, and lists the steps to retire them (see [Key lifecycle](key-lifecycle.md)): revoke each grant, `sa-forge-signer key destroy <name>`, then remove the config directory. Run it again afterwards, or add `--force` to remove the signer anyway.
+`--uninstall` removes both binaries and their links, and never touches the config, keys or audit log. While key files remain it keeps the signer, which `key destroy` needs, and lists the steps to retire them (see [Key lifecycle](key-lifecycle.md)): revoke each grant, `sa-forge-signer key destroy <name>`, then remove the config directory. Run it again afterwards, or add `--force` to remove the signer anyway.
 
 ## Prebuilt binary
 
