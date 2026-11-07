@@ -620,7 +620,10 @@ fn approved_fresh(
 /// whichever node reports that height (a lagging node's blockhash, 2026-10-14 and 10-15). It is
 /// re-signed and simulated once with a fresh one; still stale, it is refused, and nothing is sent,
 /// so a retry is safe. A height that cannot be read changes nothing.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the signed transaction, its signing inputs and the report; a struct would serve only the lint"
+)]
 fn unless_stale(
     chain: &impl Fresh,
     height: impl Fn() -> Option<u64>,
