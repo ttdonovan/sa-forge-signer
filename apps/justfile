@@ -1,15 +1,17 @@
-# Extras under apps/, each its own crate and workspace. Imported by the root justfile;
-# paths are relative to this file, so it also works when run from apps/.
+# Extras under apps/, as the `apps` module of the root justfile: `just apps <recipe>`.
+# Paths are relative to this file, so it also works from apps/.
+
+[private]
+default:
+    @just --justfile {{ source_file() }} --list
 
 # Run the read-only desktop console (spike) against the signer's config; paths resolve from where you run it
-[group('apps')]
 [no-cd]
 [positional-arguments]
 console *args:
     cargo run --locked --manifest-path {{ source_directory() }}/console/Cargo.toml -- "$@"
 
 # The console's own gate: fmt, clippy (warnings are errors), tests, advisories, dependency age
-[group('apps')]
 console-check:
     cd {{ source_directory() }}/console && cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked && cargo audit
     {{ source_directory() }}/../scripts/ci/crate-age.sh {{ source_directory() }}/console/Cargo.lock

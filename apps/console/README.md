@@ -8,7 +8,7 @@ cargo install --locked --git https://github.com/ttdonovan/sa-forge-signer --tag 
 cargo install --locked --path apps/console
 
 # Or run it from the repository root
-just console --config ./config.toml
+just apps console --config ./config.toml
 ```
 
 **Docs:** [Console](https://ttdonovan.github.io/sa-forge-signer/apps/console.html) in the book (source: [`docs/src/apps/console.md`](../../docs/src/apps/console.md)) covers flags, what it shows, access, and watching a signer in Docker.

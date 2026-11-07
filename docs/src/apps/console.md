@@ -7,8 +7,8 @@ description: "sa-forge-signer-console: a read-only desktop view of serve health,
 `sa-forge-signer-console` is a desktop window (egui) for watching a signer. It reads the signer's audit log and config and polls `serve`'s `/health`; it never writes, locks, signs or approves anything. It is an early spike in `apps/console/`.
 
 ```sh
-just console                                        # the signer's default config
-just console --config ./config.toml --state-dir ./state --url http://127.0.0.1:8790
+just apps console                                   # the signer's default config
+just apps console --config ./config.toml --state-dir ./state --url http://127.0.0.1:8790
 ```
 
 | Flag | Default |
@@ -34,7 +34,7 @@ The console runs as the human, who needs **read** access to the signer's `state_
 Run the console on the host against the container from [Running in Docker](../docker.md): health comes over the published port, and the audit log from the state mount. The config's `state_dir` is a path inside the container, so pass the host side of the mount:
 
 ```sh
-just console --config "$PWD/config.toml" --state-dir "$PWD/state"
+just apps console --config "$PWD/config.toml" --state-dir "$PWD/state"
 ```
 
 `listen = "0.0.0.0:8790"` becomes `http://127.0.0.1:8790`, which matches `-p 127.0.0.1:8790:8790`; pass `--url` for any other port. `/health` needs no token. The state must be a bind mount: a named volume has no host path to read.
@@ -43,6 +43,6 @@ On macOS with Docker Desktop, files the container writes to a bind mount belong 
 
 ## Working on it
 
-The crate has its own workspace and lockfile, so its dependency tree (winit, glow and the rest) stays out of the signer's gate. `just console-check` runs its fmt, clippy, tests, `cargo audit` and the 7-day dependency age; CI does not run it.
+The crate has its own workspace and lockfile, so its dependency tree (winit, glow and the rest) stays out of the signer's gate. `just apps console-check` runs its fmt, clippy, tests, `cargo audit` and the 7-day dependency age; CI does not run it.
 
 `src/log.rs` mirrors the signer's audit `Entry` (`src/audit.rs`) and `limits` (`src/engine.rs`). Change them together: a test parses lines written by the signer (`tests/fixtures/signer-audit.jsonl`), so a change to the signer's `Entry` fails it rather than silently breaking the chain check.

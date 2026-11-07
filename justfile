@@ -14,10 +14,10 @@ check:
 build:
     cargo build --release --locked
 
-# The docs book and the apps/ extras.
+# The docs book (`just docs`, `just docs check`) and the apps/ extras (`just apps <recipe>`).
 
-import "docs/justfile"
-import "apps/justfile"
+mod docs
+mod apps
 
 # Local git review (review, diff, approve, ...), self-contained in scripts/git-review/.
 
