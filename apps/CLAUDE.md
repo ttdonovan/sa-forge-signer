@@ -11,7 +11,7 @@ Extras that sit beside the signer: tools a human runs to watch or work with it. 
 
 ## Code
 
-- Same standards as the signer: Rust edition 2024, the root's `[lints]` block (no panics, no `as` casts, checked arithmetic) copied into the app's `Cargo.toml`, a copy of `clippy.toml`, `cargo fmt`, and tests for logic.
+- Same standards as the signer (the Code style section of `CONTRIBUTING.md`): Rust edition 2024, the root's `[lints]` block (no panics, no `as` casts, checked arithmetic) copied into the app's `Cargo.toml`, a copy of `clippy.toml`, `cargo fmt`, and tests for logic.
 - When an app mirrors signer logic (the console mirrors the audit `Entry` and `limits`), say so in the module doc, keep it in step with `src/`, and keep a test that parses output written by the real signer, as `apps/console/tests/fixtures/` does.
 - Dependencies must be at least 7 days old. A fresh lockfile usually picks up newer ones: pin each back with `cargo update -p <name>@<version> --precise <older>` until `scripts/ci/crate-age.sh apps/<app>/Cargo.lock` passes. The one exception is the console's UI framework: its gate sets `ALLOW_YOUNG_PREFIXES` so the `gpui-kit`, `gpui-base`, `gpui-component` and `gpui-pre` crate families may be newer (the owner's choice: they release weekly and pin each other exactly). Every other crate in its lockfile still has to be 7 days old.
 

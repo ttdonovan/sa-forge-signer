@@ -11,6 +11,20 @@
 
 Run `just` to list recipes. Before opening a pull request, run `just check` (the same gate as CI: fmt, clippy with warnings as errors, tests, shellcheck, advisories, dependency age), and `just docs check` if a doc changed. Keep `PLAN.md` in step with the work it tracks.
 
+## Code style
+
+The tools enforce most of it: `cargo fmt`, and clippy with `pedantic` and `nursery` denied and the panic rules in `Cargo.toml`'s `[lints]` (no `unwrap`, `expect`, `panic!`, indexing or slicing outside tests, no `as` casts, checked arithmetic, `unsafe_code` forbidden). The rest is by convention:
+
+- **Errors:** return `anyhow::Result`; add context to every file, network and parse error (`.with_context(|| format!("reading {}", path.display()))`) so a message names what failed.
+- **Lints:** fix the code, for example split a function that is too long, rather than silencing the lint. Where that would make the code worse, or the lint is a false positive or fires on generated code, use `#[expect(lint, reason = "...")]` on the one item, never a bare `#[allow]`.
+- **Control flow:** `match` or `let ... else` instead of checking and then unwrapping; a plain `for` loop when an iterator chain would be harder to read; an enum instead of a `bool` parameter whose meaning is not obvious at the call site.
+- **Names:** whole words, not abbreviations, except the usual short ones (`cfg`, `tx`, `ix`).
+- **Modules:** each module's `//!` comment says what it owns and is the authority if the [code map](https://ttdonovan.github.io/sa-forge-signer/dev/code-map.html) drifts. Code that mirrors other code (as the console mirrors the audit log) says so and has a test against real output.
+- **Comments:** short, for what the code cannot say: why, an invariant, or a dated observation.
+- **Tests:** for every check and every piece of logic; a refusal is tested as well as the pass.
+
+For further reading, Google's [Rust style guide](https://google.github.io/styleguide/rustguide.html) and the [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/) are close to this, with two differences: we deny `expect` as well as `unwrap` outside tests, and the public interface is the one under Versioning, not a library API.
+
 ## Commits
 
 Use [Conventional Commits](https://www.conventionalcommits.org/): prefix each message with its type, write the rest as a sentence, and end it with a full stop.
