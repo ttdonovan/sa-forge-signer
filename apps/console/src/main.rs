@@ -5,6 +5,7 @@ mod app;
 mod config;
 mod format;
 mod log;
+mod theme;
 
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -112,6 +113,7 @@ fn main() {
         .with_assets(gpui_kit::assets::Assets)
         .run(move |cx| {
             gpui_kit::init(cx);
+            theme::apply(cx);
             // GPUI leaves quitting to the app: Cmd-Q, the menu, and closing the only window.
             cx.on_action(|_: &Quit, cx| cx.quit());
             cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);

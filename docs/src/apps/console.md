@@ -4,7 +4,7 @@ description: "sa-forge-signer-console: a read-only desktop view of serve health,
 
 # Console
 
-`sa-forge-signer-console` is a desktop window, built with [GPUI Kit](https://gpui-kit.com), for watching a signer. It reads the signer's audit log and config and polls `serve`'s `/health`; it never writes, locks, signs or approves anything. It is an early spike in `apps/console/`. Building it needs Rust 1.95 or later; on macOS, macOS 15 or later and the Xcode Command Line Tools (`xcode-select --install`).
+`sa-forge-signer-console` is a desktop window, built with [GPUI Kit](https://gpui-kit.com), for watching a signer. It reads the signer's audit log and config and polls `serve`'s `/health`; it never writes, locks, signs or approves anything. It is an early spike in `apps/console/`. It always uses its own dark theme, whatever the system appearance. Building it needs Rust 1.95 or later; on macOS, macOS 15 or later and the Xcode Command Line Tools (`xcode-select --install`).
 
 ```sh
 just apps console                                   # the signer's default config

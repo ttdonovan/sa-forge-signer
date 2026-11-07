@@ -20,14 +20,16 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext as _, Context, Div, Entity, FocusHandle, Focusable as _, Hsla,
-    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render, SharedString,
-    Stateful, StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, div, px,
+    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Pixels, Render,
+    SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, Subscription, Task,
+    Window, div, px,
 };
 
 use crate::Health;
 use crate::config::{self, Config};
 use crate::format::{age, fraction, outcome_label, shorten_addresses, signed_zink, when, zink};
 use crate::log::{Chain, Entry, Row, SIGN_INTENT, Snapshot};
+use crate::theme;
 
 const POLL_EVERY: Duration = Duration::from_millis(500);
 /// How long a new row stays highlighted.
@@ -157,8 +159,10 @@ impl TableDelegate for LogTable {
             "age" => div().child(age(self.now, r.ts)).into_any_element(),
             "key" => div().child(r.key.clone()).into_any_element(),
             "command" => div().child(r.command.clone()).into_any_element(),
-            "outcome" => div()
+            "outcome" => h_flex()
+                .gap_2()
                 .text_color(r.tone.color(cx))
+                .child(dot(r.tone.color(cx)))
                 .child(r.outcome.clone())
                 .into_any_element(),
             "zink" => div()
@@ -467,20 +471,14 @@ impl Console {
     fn status_bar(&self, cx: &App) -> impl IntoElement {
         let t = cx.theme();
         let (serve, serve_color) = match (&self.url, &self.health) {
-            (None, _) => ("serve: not configured".to_owned(), t.muted_foreground),
-            (Some(u), None) => (format!("serve {u}: checking"), t.muted_foreground),
-            (Some(u), Some(Health::Up)) => (format!("serve {u}: up"), t.success),
-            (Some(u), Some(Health::Down(e))) => (format!("serve {u}: down ({e})"), t.danger),
+            (None, _) => ("not configured".to_owned(), t.muted_foreground),
+            (Some(u), None) => (format!("checking {u}"), t.muted_foreground),
+            (Some(u), Some(Health::Up)) => (format!("up {u}"), t.success),
+            (Some(u), Some(Health::Down(e))) => (format!("down {u} ({e})"), t.danger),
         };
         let (chain, chain_color) = match &self.log.chain {
-            Chain::Ok => (
-                format!("audit chain ok, {} entries", self.log.entries.len()),
-                t.success,
-            ),
-            Chain::Broken(line, why) => (
-                format!("audit chain broken at line {line}: {why}"),
-                t.danger,
-            ),
+            Chain::Ok => (format!("ok, {} entries", self.log.entries.len()), t.success),
+            Chain::Broken(line, why) => (format!("broken at line {line}: {why}"), t.danger),
         };
         let unresolved = self
             .log
@@ -501,23 +499,30 @@ impl Console {
             .px_3()
             .py_2()
             .gap_1()
+            .bg(theme::c(theme::PANEL))
             .border_b_1()
             .border_color(t.border)
             .child(
                 h_flex()
-                    .gap_4()
+                    .gap_6()
                     .text_sm()
-                    .child(div().text_color(serve_color).child(serve))
-                    .child(div().text_color(chain_color).child(chain))
+                    .child(chip("serve", serve, serve_color, t))
+                    .child(chip("audit chain", chain, chain_color, t))
                     .when(unresolved > 0, |d| {
-                        d.child(div().text_color(t.warning).child(format!(
-                            "{unresolved} unresolved: reconcile before retrying"
-                        )))
+                        d.child(chip(
+                            "unresolved",
+                            format!("{unresolved}: reconcile before retrying"),
+                            t.warning,
+                            t,
+                        ))
                     })
                     .children(self.log.entries.last().map(|e| {
-                        div()
-                            .text_color(t.muted_foreground)
-                            .child(format!("last activity {}", age(unix_now(), e.ts)))
+                        chip(
+                            "last activity",
+                            age(unix_now(), e.ts),
+                            t.muted_foreground,
+                            t,
+                        )
                     }))
                     .children(
                         [&self.config_error, &self.log_error]
@@ -533,11 +538,13 @@ impl Console {
         let now = unix_now();
         let t = cx.theme().clone();
         let explorer = self.config.explorer_url.clone();
-        let mut panel = v_flex().size_full().p_3().gap_3().child(
-            h_flex()
-                .justify_between()
-                .child(div().text_lg().child("Keys"))
-                .child(
+        let mut panel = v_flex()
+            .size_full()
+            .p_3()
+            .gap_3()
+            .bg(theme::c(theme::PANEL))
+            .child(
+                h_flex().justify_between().child(heading("Keys")).child(
                     Button::new("all-keys")
                         .small()
                         .ghost()
@@ -548,7 +555,7 @@ impl Console {
                             this.rebuild(cx);
                         })),
                 ),
-        );
+            );
         for (ix, k) in self.keys().into_iter().enumerate() {
             panel = panel.child(self.key_card(ix, &k, now, &t, explorer.as_deref(), cx));
         }
@@ -578,11 +585,14 @@ impl Console {
         let recent = u64::try_from(u.recent).unwrap_or(u64::MAX);
         v_flex()
             .id(("key", ix))
-            .p_2()
-            .gap_1()
-            .rounded_md()
+            .p_3()
+            .gap_1p5()
+            .bg(theme::c(theme::RAISED))
+            .rounded(t.radius_lg)
             .border_1()
-            .border_color(if selected { t.primary } else { t.border })
+            .border_l_2()
+            .border_color(if selected { t.info } else { t.border })
+            .hover(|s| s.bg(theme::c(theme::BORDER)))
             .cursor_pointer()
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.key_filter = if this.key_filter.as_deref() == Some(name.as_str()) {
@@ -657,7 +667,7 @@ impl Console {
                 h_flex()
                     .p_2()
                     .gap_3()
-                    .child(div().text_lg().child("Audit log"))
+                    .child(heading("Audit log"))
                     .child(
                         Checkbox::new("unresolved-only")
                             .label("unresolved only")
@@ -712,6 +722,7 @@ impl Console {
             v_flex()
                 .id("detail")
                 .size_full()
+                .bg(theme::c(theme::PANEL))
                 .p_3()
                 .gap_3()
                 .overflow_y_scrollbar()
@@ -720,7 +731,8 @@ impl Console {
                         .justify_between()
                         .child(
                             div()
-                                .text_lg()
+                                .text_xl()
+                                .font_semibold()
                                 .text_color(Tone::of(e, unresolved).color(cx))
                                 .child(outcome_label(e, unresolved)),
                         )
@@ -844,18 +856,26 @@ impl Render for Console {
             .child(
                 h_resizable("main")
                     .child(
-                        resizable_panel().size(px(300.0)).child(
-                            div()
-                                .id("keys")
-                                .size_full()
-                                .overflow_y_scrollbar()
-                                .child(self.keys_panel(cx)),
-                        ),
+                        resizable_panel()
+                            .size(px(300.0))
+                            .size_range(px(240.0)..px(480.0))
+                            .child(
+                                div()
+                                    .id("keys")
+                                    .size_full()
+                                    .overflow_y_scrollbar()
+                                    .child(self.keys_panel(cx)),
+                            ),
                     )
-                    .child(resizable_panel().child(self.log_panel(cx)))
                     .child(
                         resizable_panel()
-                            .size(px(460.0))
+                            .size_range(px(420.0)..Pixels::MAX)
+                            .child(self.log_panel(cx)),
+                    )
+                    .child(
+                        resizable_panel()
+                            .size(px(480.0))
+                            .size_range(px(380.0)..px(900.0))
                             .visible(detail.is_some())
                             .children(detail),
                     ),
@@ -904,16 +924,35 @@ fn limit_bar(
 fn section(title: &str, fields: Vec<AnyElement>, t: &Theme) -> impl IntoElement {
     v_flex()
         .gap_2()
+        .child(heading(title).pb_1().border_b_1().border_color(t.border))
+        .children(fields)
+}
+
+/// A small uppercase teal label, the HUD's panel and section heading.
+fn heading(text: &str) -> Div {
+    div()
+        .text_xs()
+        .font_semibold()
+        .text_color(theme::c(theme::TEAL))
+        .child(text.to_uppercase())
+}
+
+/// A status-bar item: a coloured dot, an uppercase label and its value.
+fn chip(label: &str, value: String, color: Hsla, t: &Theme) -> impl IntoElement {
+    h_flex()
+        .gap_2()
+        .child(dot(color))
         .child(
             div()
-                .text_sm()
-                .font_semibold()
-                .pb_1()
-                .border_b_1()
-                .border_color(t.border)
-                .child(title.to_owned()),
+                .text_xs()
+                .text_color(t.muted_foreground)
+                .child(label.to_uppercase()),
         )
-        .children(fields)
+        .child(div().text_color(color).child(value))
+}
+
+fn dot(color: Hsla) -> Div {
+    div().size(px(7.0)).rounded_full().bg(color)
 }
 
 /// A label over a plain value: intents, summaries, times and amounts.
