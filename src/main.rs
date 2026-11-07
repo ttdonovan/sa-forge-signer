@@ -234,16 +234,7 @@ fn key_command(path: &std::path::Path, cmd: KeyCommand) -> Result<ExitCode> {
             new_key_snippet(path, &name, class, &pubkey);
             Ok(ExitCode::SUCCESS)
         }
-        KeyCommand::Import { name, class, from } => {
-            let cfg = Config::load(path, false)?;
-            let pubkey = KeyStore::new(&cfg.key_dir).import(&name, &from)?;
-            eprintln!(
-                "Imported {} as {name}; the original is unchanged, delete it when you no longer need it.",
-                from.display()
-            );
-            new_key_snippet(path, &name, class, &pubkey);
-            Ok(ExitCode::SUCCESS)
-        }
+        KeyCommand::Import { name, class, from } => key_import(path, &name, class, &from),
         KeyCommand::Fund {
             name,
             zink,
@@ -324,6 +315,26 @@ fn key_command(path: &std::path::Path, cmd: KeyCommand) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
     }
+}
+
+fn key_import(
+    path: &std::path::Path,
+    name: &str,
+    class: KeyClass,
+    from: &std::path::Path,
+) -> Result<ExitCode> {
+    let cfg = Config::load(path, false)?;
+    let (pubkey, written) = KeyStore::new(&cfg.key_dir).import(name, from)?;
+    if written {
+        eprintln!(
+            "Imported {} as {name}; the original is unchanged, delete it when you no longer need it.",
+            from.display()
+        );
+    } else {
+        eprintln!("{name} already holds this key; nothing was written.");
+    }
+    new_key_snippet(path, name, class, &pubkey);
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Prints a new key's pubkey, and the config block to add for it on stderr.

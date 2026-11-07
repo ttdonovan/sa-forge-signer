@@ -36,10 +36,11 @@ impl KeyStore {
         self.store(name, &Keypair::new())
     }
 
-    /// Copies an existing Solana CLI keypair file into the store as `name`; refuses to overwrite
-    /// and leaves `from` unchanged. Returns only the pubkey.
-    pub fn import(&self, name: &str, from: &Path) -> Result<Address> {
-        self.path(name)?;
+    /// Copies an existing Solana CLI keypair file into the store as `name`, leaving `from`
+    /// unchanged. Returns the pubkey and whether a file was written: importing the same keypair
+    /// again writes nothing, and a different key under `name` is refused, never overwritten.
+    pub fn import(&self, name: &str, from: &Path) -> Result<(Address, bool)> {
+        let path = self.path(name)?;
         let meta = std::fs::symlink_metadata(from)
             .with_context(|| format!("reading {}", from.display()))?;
         if !meta.file_type().is_file() {
@@ -48,7 +49,19 @@ impl KeyStore {
         let text = Zeroizing::new(
             std::fs::read_to_string(from).with_context(|| format!("reading {}", from.display()))?,
         );
-        self.store(name, &parse_keypair(&text, &from.display().to_string())?)
+        let keypair = parse_keypair(&text, &from.display().to_string())?;
+        if path.exists() {
+            let existing = self.load(name)?;
+            if Zeroizing::new(existing.to_bytes()) != Zeroizing::new(keypair.to_bytes()) {
+                bail!(
+                    "{} already holds a different key ({}); choose another name",
+                    path.display(),
+                    existing.pubkey()
+                );
+            }
+            return Ok((keypair.pubkey(), false));
+        }
+        Ok((self.store(name, &keypair)?, true))
     }
 
     fn store(&self, name: &str, keypair: &Keypair) -> Result<Address> {
@@ -171,7 +184,7 @@ mod tests {
         )
         .unwrap();
         let ks = KeyStore::new(&dir);
-        assert_eq!(ks.import("imported", &file).unwrap(), kp.pubkey());
+        assert_eq!(ks.import("imported", &file).unwrap(), (kp.pubkey(), true));
         assert_eq!(ks.load("imported").unwrap().pubkey(), kp.pubkey());
         let mode = std::fs::metadata(dir.join("imported.json"))
             .unwrap()
@@ -179,7 +192,22 @@ mod tests {
             .mode();
         assert_eq!(mode & 0o777, 0o600);
         assert!(file.exists(), "the source is left in place");
-        assert!(ks.import("imported", &file).is_err(), "never overwrites");
+        assert_eq!(
+            ks.import("imported", &file).unwrap(),
+            (kp.pubkey(), false),
+            "the same key again writes nothing"
+        );
+        let other = src.join("other.json");
+        std::fs::write(
+            &other,
+            serde_json::to_string(&Keypair::new().to_bytes().to_vec()).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            ks.import("imported", &other).is_err(),
+            "never overwrites another key"
+        );
+        assert_eq!(ks.load("imported").unwrap().pubkey(), kp.pubkey());
         std::fs::write(src.join("bad.json"), "[1,2,3]").unwrap();
         assert!(ks.import("bad", &src.join("bad.json")).is_err());
         assert!(!dir.join("bad.json").exists());
