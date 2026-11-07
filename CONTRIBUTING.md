@@ -39,7 +39,7 @@ While the version is `0.x`, a breaking change bumps the minor version (`0.4.0` t
 
 ## Releases
 
-Releases are made by [release-plz](https://release-plz.dev/) from the commit messages. The crate is not published to crates.io (`publish = false`); release-plz runs in git-only mode, reading the current version from the `vX.Y.Z` tags. On each push to `main`, it opens or updates a release PR that bumps the version in `Cargo.toml` and updates `CHANGELOG.md`. Review both in that PR; merging it tags `vX.Y.Z` and creates a GitHub Release.
+Releases are made by [release-plz](https://release-plz.dev/) from the commit messages. The crate is not published to crates.io (`publish = false`); release-plz runs in git-only mode, reading the current version from the `vX.Y.Z` tags. On each push to `main`, it opens or updates a release PR that bumps the version in `Cargo.toml` and updates `CHANGELOG.md`. Review both in that PR; merging it tags `vX.Y.Z` and creates a GitHub Release. The `Release binaries` workflow then builds the binaries for that tag, attests them, and attaches them with a `SHA256SUMS` file to the release. To build them for an existing tag (or rebuild them), run it by hand from the Actions tab with the tag.
 
 Install a release from its tag:
 
