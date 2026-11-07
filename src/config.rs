@@ -305,7 +305,9 @@ impl Config {
             self.state_dir.display()
         );
         if self.keys.is_empty() {
-            s.push_str("\nkeys: none (add one with `key new`)\n");
+            s.push_str(
+                "\nkeys: none (add one with `key new`, or `key import` for an existing keypair file)\n",
+            );
         }
         for k in &self.keys {
             let _ = write!(

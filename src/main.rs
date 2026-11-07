@@ -180,7 +180,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             config::init(&path)?;
             println!("{}", path.display());
             eprintln!(
-                "\nWrote the example config to {}. Next:\n  sa-forge-signer key new <name> --class session   and paste the block it prints\n  sa-forge-signer config show",
+                "\nWrote the example config to {}. Next, add each key and paste the block it prints:\n  sa-forge-signer key new <name> --class session\n  sa-forge-signer key import <name> --class session --from <keypair.json>   (a key you already have)\nthen check it with:\n  sa-forge-signer config show",
                 path.display()
             );
             Ok(ExitCode::SUCCESS)
