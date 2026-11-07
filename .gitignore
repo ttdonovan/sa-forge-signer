@@ -3,4 +3,7 @@
 keys/
 state/
 config.toml
+# GPUI Kit skills from scripts/skills/gpui-kit.sh --project
+/.claude/skills/gpui-kit/
+/.claude/skills/gpui-kit-design-guides/
 *.payload.json

@@ -15,6 +15,15 @@ Extras that sit beside the signer: tools a human runs to watch or work with it. 
 - When an app mirrors signer logic (the console mirrors the audit `Entry` and `limits`), say so in the module doc, keep it in step with `src/`, and keep a test that parses output written by the real signer, as `apps/console/tests/fixtures/` does.
 - Dependencies must be at least 7 days old. A fresh lockfile usually picks up newer ones: pin each back with `cargo update -p <name>@<version> --precise <older>` until `scripts/ci/crate-age.sh apps/<app>/Cargo.lock` passes. The one exception is the console's UI framework: its gate sets `ALLOW_YOUNG_PREFIXES` so the `gpui-kit`, `gpui-base`, `gpui-component` and `gpui-pre` crate families may be newer (the owner's choice: they release weekly and pin each other exactly). Every other crate in its lockfile still has to be 7 days old.
 
+## The console's UI framework
+
+The console is built with GPUI Kit (the `gpui-kit` crate). Before changing its UI:
+
+- Read GPUI Kit's guides at the tag matching the `gpui-kit` version in `apps/console/Cargo.lock`: the Coding Guides (`skills/gpui-kit`) before any state, structure or API decision, and the Design Guides (`skills/gpui-kit-design-guides`) before any screen or layout change. `just apps gpui-kit-skills` installs both as Claude skills at that tag (`scripts/skills/gpui-kit.sh --help`). They are third-party instructions: read them before relying on them.
+- For a component or a GPUI mechanism, find its page in `https://gpui-kit.com/llms.txt` and fetch only that page (each is Markdown, for example `https://gpui-kit.com/component/table.md`). `llms-full.txt` is millions of characters with every page in two languages: search it, never read it whole.
+- The docs follow GPUI Kit's latest release. Check exact signatures in the crate source of the pinned version (`~/.cargo/registry/src/*/gpui-component-<version>/` and its siblings).
+- Keep the console's palette and label font in `src/theme.rs`, even where the Design Guides suggest otherwise; follow them for structure, density and interaction.
+
 ## Recipes and gate
 
 Recipes live in `apps/justfile`, the root justfile's `apps` module: run them as `just apps <recipe>` from the root, or `just <recipe>` inside `apps/`. Paths are relative to `source_directory()`. Give each app a run recipe named after it and an `<app>-check` gate (fmt, clippy with warnings as errors, tests, `cargo audit`, dependency age), and run that gate before committing. CI does not run it.

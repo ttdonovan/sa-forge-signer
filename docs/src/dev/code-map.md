@@ -15,6 +15,7 @@ description: "Where things live: the repository layout (src, apps, docs, scripts
 | `justfile` | Recipes: `just check` (the gate), plus the `docs` and `apps` modules in `docs/justfile` and `apps/justfile` (`just docs check`, `just apps console`) |
 | `scripts/ci/` | `check.sh` (the gate run by `just check` and CI), `crate-age.sh` (dependency age), `docs-check.sh` (`just docs check`), `docker-toolchain.sh` (the Dockerfile's Rust matches `rust-toolchain.toml`) |
 | `scripts/installer/` | `install.sh`: installs, updates or uninstalls the signer and the console on a host ([Install and update](../install.md)) |
+| `scripts/skills/` | `gpui-kit.sh`: installs GPUI Kit's Claude skills at the console's `gpui-kit` version (`just apps gpui-kit-skills`) |
 | `scripts/git-review/` | The local review workflow, `just mr-open` to `just mr-approve` ([Local review with git-review](git-review.md)) |
 | `.github/workflows/` | `ci.yml` (the gate and a Docker build), `pages.yml` (publishes this book), `release-plz.yml` (release PRs and tags), `release-binaries.yml` (attested binaries for each tag) |
 | `Dockerfile` | The container image ([Running in Docker](../docker.md)) |

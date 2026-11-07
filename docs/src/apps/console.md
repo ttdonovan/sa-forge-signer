@@ -48,4 +48,6 @@ On macOS with Docker Desktop, files the container writes to a bind mount belong 
 
 The crate has its own workspace and lockfile, so its dependency tree (GPUI and the rest) stays out of the signer's gate. `just apps console-check` runs its fmt, clippy, tests, `cargo audit` and the 7-day dependency age; CI does not run it.
 
+Changing the UI: GPUI Kit's guides and docs, and how to read them, are in [Building an app](../dev/apps.md); `just apps gpui-kit-skills` installs its Claude skills at the console's `gpui-kit` version.
+
 `src/log.rs` mirrors the signer's audit `Entry` (`src/audit.rs`) and `limits` (`src/engine.rs`). Change them together: a test parses lines written by the signer (`tests/fixtures/signer-audit.jsonl`), so a change to the signer's `Entry` fails it rather than silently breaking the chain check.
