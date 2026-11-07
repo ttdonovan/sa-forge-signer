@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Fails if any crates.io package in Cargo.lock was published less than MIN_AGE_DAYS (default 7) ago.
+# Fails if any crates.io package in a lockfile (default: Cargo.lock) was published less than MIN_AGE_DAYS (default 7) ago.
 # Reads "pubtime" from the sparse index; versions without it pass, as Cargo's own min-publish-age does.
 # Replace with registry.global-min-publish-age in .cargo/config.toml once the toolchain is >= 1.100.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 min_days="${MIN_AGE_DAYS:-7}"
+lock="${1:-$ROOT/Cargo.lock}"
 now="$(date +%s)"
 cutoff=$((now - min_days * 86400))
 # "name version" pairs allowed younger than min_days, each with its reason; remove once old enough.
@@ -28,9 +29,9 @@ packages="$(awk '
     /^name = /    { gsub(/"/, "", $3); name = $3 }
     /^version = / { gsub(/"/, "", $3); version = $3 }
     /^source = "registry\+https:\/\/github.com\/rust-lang\/crates.io-index"/ { print name, version }
-' "$ROOT/Cargo.lock")"
+' "$lock")"
 [ -n "$packages" ] || {
-    printf 'error: no crates.io packages found in Cargo.lock\n' >&2
+    printf 'error: no crates.io packages found in %s\n' "$lock" >&2
     exit 1
 }
 

@@ -37,6 +37,17 @@ docs-setup:
     cargo install --locked mdbook-mermaid --version 0.17.1
     cargo install --locked --git https://github.com/ttdonovan/mdbook-llms --tag v0.4.0
 
+# Run the read-only desktop console (spike) against the signer's config
+[group('console')]
+console *args:
+    cd apps/console && cargo run --locked -- {{args}}
+
+# The console's own gate: fmt, clippy (warnings are errors), tests, advisories, dependency age
+[group('console')]
+console-check:
+    cd apps/console && cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked && cargo audit
+    scripts/ci/crate-age.sh apps/console/Cargo.lock
+
 # Local git review (review, diff, approve, ...), self-contained in scripts/git-review/.
 
 import "scripts/git-review/justfile"
