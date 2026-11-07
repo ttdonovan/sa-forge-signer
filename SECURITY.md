@@ -5,7 +5,7 @@
 | Threat | Control |
 |---|---|
 | The agent reads the key file and skips every check | Keys and config are unreadable by the agent's OS user (separate user or container). Key files must be 0600 in a 0700 directory or the signer refuses to load them. |
-| A buggy or malicious payload (from the builder, a hand-written file or a prompt injection) | The structural checks in the README, simulation before sending, `confirm` for `wallet` keys, then the on-chain key limits. |
+| A buggy or malicious payload (from the builder, a hand-written file or a prompt injection) | The [structural checks](https://ttdonovan.github.io/sa-forge-signer/how-it-works.html), simulation before sending, `confirm` for `wallet` keys, then the on-chain key limits. |
 | A wrong or swapped RPC URL | The RPC's genesis hash must match the cluster profile. |
 | Private keys inside payloads (`partial_signers`) | Never logged; the audit log hashes the payload without them; the payload file is deleted once sent. |
 | Approval spoofed by the agent | `confirm` reads only from the controlling terminal (`/dev/tty`), never stdin. Without a terminal it refuses. |
@@ -13,7 +13,7 @@
 | A stolen wallet key (Path A) | Nothing on-chain limits it. Keep only working balances in it. |
 | Another local process or a web page calls `serve` | Every route but `/health` needs a bearer token; config stores only its sha256 and the keys it may use. Host and Origin must be an allowed host. |
 | A restart mid-sign | `serve` drains running requests on SIGTERM/SIGINT (up to 220 s) before exiting; a dropped connection during `sign` means `unknown`, not failed. |
-| Double actions after a timeout | Nothing short of a landed status is reported as final: an expired blockhash with no status found is `unknown`, since an RPC cannot prove absence (see below). Callers must reconcile the signature and the on-chain state before retrying (README, "Retrying safely"). |
+| Double actions after a timeout | Nothing short of a landed status is reported as final: an expired blockhash with no status found is `unknown`, since an RPC cannot prove absence (see below). Callers must reconcile the signature and the on-chain state before retrying ([Retrying safely](https://ttdonovan.github.io/sa-forge-signer/check-and-sign.html#retrying-safely)). |
 | A transaction that takes the key past its daily cap | The cap is checked under the key lock, after the final simulation, against spent-or-reserved plus this transaction's simulated spend and fee; with no simulated balance or no fee estimate the sign is refused. The simulated balance usually includes the fee already, so this over-reserves by one fee rather than ever under-counting. |
 | Concurrent signs racing the limits | Signs with one key are serialized by a file lock, and every send is recorded as an intent with its reservation before it leaves; unresolved spends are charged that reservation. |
 | Rent paid out through token-account creation | Associated Token creates must name the real System and SPL Token or Token-2022 programs, and may create accounts only for the signing key, its transfer destinations, or an existing account owned by one of the cluster's built-in game programs (not a key's `extra_programs`). |

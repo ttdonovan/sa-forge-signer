@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # sa-forge-signer in a container: non-root, no keys or config in the image.
 # Mount at run time: config /etc/sa-forge-signer/config.toml (ro), keys /run/keys (0700 dir, 0600 files),
-# state /var/lib/sa-forge-signer (the audit log). See README "Run in Docker".
+# state /var/lib/sa-forge-signer (the audit log). See docs/src/docker.md.
 
 # Base images are pinned by digest. The Rust tag must match rust-toolchain.toml (scripts/ci/check.sh checks it).
 ARG RUST_IMAGE=rust:1.98.1-slim-trixie@sha256:4cd829461bd5c4d511c32e269da9cb8929223b666519d8004e35fc8d1d771ab7
