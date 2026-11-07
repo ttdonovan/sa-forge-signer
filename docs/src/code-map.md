@@ -16,7 +16,7 @@ One binary crate; each module's `//!` comment is the authority if this page drif
 | `checks.rs` | Structural checks on the compiled message; none decode game instructions |
 | `engine.rs` | The check and sign pipeline: simulate, limits, sign, send, confirm |
 | `rpc.rs` | The minimal Solana JSON-RPC client: only the calls the signer needs |
-| `keystore.rs` | The file key store: `<key_dir>/<name>.json`, 0700 directory, 0600 files |
+| `keystore.rs` | The file key store: `<key_dir>/<name>.json`, 0700 directory, 0600 files; key create, import and destroy |
 | `audit.rs` | The append-only, hash-chained JSONL audit log, and the per-key signing lock |
 | `serve.rs` | `serve`: JSON over HTTP at `/v1/check` and `/v1/sign`, MCP at `/mcp`, bearer-token auth |
 

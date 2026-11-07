@@ -97,6 +97,15 @@ enum KeyCommand {
         #[arg(long, value_enum)]
         class: KeyClass,
     },
+    /// Copy an existing Solana CLI keypair file into the key store; prints only its pubkey and a config snippet
+    Import {
+        name: String,
+        #[arg(long, value_enum)]
+        class: KeyClass,
+        /// The keypair file (a JSON array of 64 bytes); left unchanged
+        #[arg(long)]
+        from: PathBuf,
+    },
     /// Show a configured key's pubkey, class, approval and balance
     Show { name: String },
     /// Build an unsigned payload that funds a configured key with ZINK; sign it with `sign`
@@ -222,12 +231,17 @@ fn key_command(path: &std::path::Path, cmd: KeyCommand) -> Result<ExitCode> {
         KeyCommand::New { name, class } => {
             let cfg = Config::load(path, false)?;
             let pubkey = KeyStore::new(&cfg.key_dir).create(&name)?;
-            let class = class.as_str();
-            println!("{pubkey}");
+            new_key_snippet(path, &name, class, &pubkey);
+            Ok(ExitCode::SUCCESS)
+        }
+        KeyCommand::Import { name, class, from } => {
+            let cfg = Config::load(path, false)?;
+            let pubkey = KeyStore::new(&cfg.key_dir).import(&name, &from)?;
             eprintln!(
-                "\nAdd to {}:\n\n[keys.{name}]\nclass = \"{class}\"\npubkey = \"{pubkey}\"",
-                path.display()
+                "Imported {} as {name}; the original is unchanged, delete it when you no longer need it.",
+                from.display()
             );
+            new_key_snippet(path, &name, class, &pubkey);
             Ok(ExitCode::SUCCESS)
         }
         KeyCommand::Fund {
@@ -310,6 +324,21 @@ fn key_command(path: &std::path::Path, cmd: KeyCommand) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
     }
+}
+
+/// Prints a new key's pubkey, and the config block to add for it on stderr.
+fn new_key_snippet(
+    path: &std::path::Path,
+    name: &str,
+    class: KeyClass,
+    pubkey: &impl std::fmt::Display,
+) {
+    println!("{pubkey}");
+    eprintln!(
+        "\nAdd to {}:\n\n[keys.{name}]\nclass = \"{}\"\npubkey = \"{pubkey}\"",
+        path.display(),
+        class.as_str()
+    );
 }
 
 fn report(r: &engine::Report) -> Result<ExitCode> {
