@@ -22,4 +22,6 @@ The mdBook that is the signer's documentation, built for agents first: `llms.txt
 
 Run `just docs check` from the repository root (or `just check` inside `docs/`) after any doc change: it fails on a build warning, an empty chapter (a missing include) or a link that leads nowhere. `just docs` builds the book and `just docs serve` previews it; `just docs setup` installs mdBook, mdbook-mermaid and mdbook-llms once.
 
+Inside `docs/`, `just check` is this book check, not the signer's gate. Run the gate from the repository root.
+
 Docs-only changes use `docs:` commits, which do not bump the signer's version.
