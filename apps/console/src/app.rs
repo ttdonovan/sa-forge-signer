@@ -1,22 +1,37 @@
 //! The window: status bar, keys with their limits, the audit log, and the selected entry.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use eframe::egui::{self, Color32, RichText};
-use egui_extras::{Column, TableBuilder};
+use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::checkbox::Checkbox;
+use gpui_kit::component::clipboard::Clipboard;
+use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::link::Link;
+use gpui_kit::component::progress::Progress;
+use gpui_kit::component::resizable::{h_resizable, resizable_panel};
+use gpui_kit::component::scroll::ScrollableElement as _;
+use gpui_kit::component::table::{Column, DataTable, TableDelegate, TableEvent, TableState};
+use gpui_kit::component::{
+    ActiveTheme as _, Disableable as _, Sizable as _, StyledExt as _, Theme, h_flex, v_flex,
+};
+use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::{
+    AnyElement, App, AppContext as _, Context, Div, Entity, FocusHandle, Focusable as _, Hsla,
+    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render, SharedString,
+    Stateful, StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, div, px,
+};
 
 use crate::Health;
 use crate::config::{self, Config};
-use crate::log::{Chain, Entry, Row, Snapshot};
+use crate::format::{age, fraction, outcome_label, shorten_addresses, signed_zink, when, zink};
+use crate::log::{Chain, Entry, Row, SIGN_INTENT, Snapshot};
 
-const POLL_EVERY: Duration = Duration::from_secs(1);
-const LAMPORTS_PER_ZINK: u64 = 1_000_000_000;
-
-const GOOD: Color32 = Color32::from_rgb(0x3f, 0xb9, 0x50);
-const WARN: Color32 = Color32::from_rgb(0xe3, 0x9b, 0x1b);
-const BAD: Color32 = Color32::from_rgb(0xe5, 0x48, 0x4d);
+const POLL_EVERY: Duration = Duration::from_millis(500);
+/// How long a new row stays highlighted.
+const FRESH: Duration = Duration::from_secs(3);
 
 pub struct Sources {
     pub config: Config,
@@ -27,7 +42,153 @@ pub struct Sources {
     pub health: Option<Receiver<Health>>,
 }
 
-pub struct App {
+/// How a value reads: drives its colour.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Tone {
+    Good,
+    Warn,
+    Bad,
+    Muted,
+}
+
+impl Tone {
+    fn of(e: &Entry, unresolved: bool) -> Self {
+        if unresolved {
+            return Self::Warn;
+        }
+        match e.outcome.as_str() {
+            "confirmed" | "ok" => Self::Good,
+            "failed" | "refused" | "error" => Self::Bad,
+            _ => Self::Muted,
+        }
+    }
+
+    fn color(self, cx: &App) -> Hsla {
+        let t = cx.theme();
+        match self {
+            Self::Good => t.success,
+            Self::Warn => t.warning,
+            Self::Bad => t.danger,
+            Self::Muted => t.muted_foreground,
+        }
+    }
+}
+
+/// One table row, with its text built when the log or the filters change.
+struct RowView {
+    entry: usize,
+    ts: u64,
+    key: SharedString,
+    command: SharedString,
+    outcome: SharedString,
+    tone: Tone,
+    change: SharedString,
+    intent: Option<SharedString>,
+    summary: SharedString,
+    /// When this row's newest entry arrived, while the console was running.
+    arrived: Option<Instant>,
+}
+
+/// The audit log as a `DataTable`: rows and columns are rebuilt by [`Console::rebuild`].
+#[derive(Default)]
+pub struct LogTable {
+    rows: Vec<RowView>,
+    columns: Vec<Column>,
+    now: u64,
+}
+
+impl LogTable {
+    fn set_columns(&mut self, show_key: bool, raw: bool) {
+        let mut cols = vec![Column::new("age", "age").width(px(80.0))];
+        if show_key {
+            cols.push(Column::new("key", "key").width(px(120.0)));
+        }
+        if raw {
+            cols.push(Column::new("command", "command").width(px(100.0)));
+        }
+        cols.push(Column::new("outcome", "outcome").width(px(100.0)));
+        cols.push(Column::new("zink", "ZINK").width(px(110.0)).text_right());
+        cols.push(Column::new("what", "intent / summary").width(px(900.0)));
+        self.columns = cols;
+    }
+}
+
+impl TableDelegate for LogTable {
+    fn columns_count(&self, _: &App) -> usize {
+        self.columns.len()
+    }
+
+    fn rows_count(&self, _: &App) -> usize {
+        self.rows.len()
+    }
+
+    fn column(&self, col_ix: usize, _: &App) -> Column {
+        self.columns
+            .get(col_ix)
+            .cloned()
+            .unwrap_or_else(|| Column::new("none", ""))
+    }
+
+    fn render_tr(
+        &mut self,
+        row_ix: usize,
+        _: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> Stateful<Div> {
+        let row = div().id(("row", row_ix));
+        match self.rows.get(row_ix).and_then(|r| r.arrived) {
+            Some(t) if t.elapsed() < FRESH => row.bg(cx.theme().success.opacity(0.18)),
+            _ => row,
+        }
+    }
+
+    fn render_td(
+        &mut self,
+        row_ix: usize,
+        col_ix: usize,
+        _: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> impl IntoElement {
+        let (Some(r), Some(col)) = (self.rows.get(row_ix), self.columns.get(col_ix)) else {
+            return div().into_any_element();
+        };
+        let muted = cx.theme().muted_foreground;
+        match col.key.as_ref() {
+            "age" => div().child(age(self.now, r.ts)).into_any_element(),
+            "key" => div().child(r.key.clone()).into_any_element(),
+            "command" => div().child(r.command.clone()).into_any_element(),
+            "outcome" => div()
+                .text_color(r.tone.color(cx))
+                .child(r.outcome.clone())
+                .into_any_element(),
+            "zink" => div()
+                .text_color(muted)
+                .child(r.change.clone())
+                .into_any_element(),
+            _ => h_flex()
+                .gap_2()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .children(r.intent.clone())
+                .child(div().text_color(muted).child(r.summary.clone()))
+                .into_any_element(),
+        }
+    }
+
+    fn render_empty(
+        &mut self,
+        _: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> impl IntoElement {
+        h_flex()
+            .size_full()
+            .justify_center()
+            .text_color(cx.theme().muted_foreground)
+            .child("No entries: the log fills as the agent checks and signs, or no entry matches the filters.")
+    }
+}
+
+pub struct Console {
     config: Config,
     config_path: Option<PathBuf>,
     config_error: Option<String>,
@@ -39,18 +200,59 @@ pub struct App {
     log_error: Option<String>,
     /// Length and mtime of the audit log when last read.
     stamp: Option<(u64, SystemTime)>,
-    last_poll: Option<Instant>,
-    filter: Option<String>,
+    /// When each entry appeared after the first read, for highlighting new rows.
+    arrived: HashMap<usize, Instant>,
+    key_filter: Option<String>,
     unresolved_only: bool,
     /// One row per audit entry instead of per signature.
     raw: bool,
     /// Index into `log.entries` of the selected row's entry.
     selected: Option<usize>,
+    focus: FocusHandle,
+    search: Entity<InputState>,
+    table: Entity<TableState<LogTable>>,
+    _subscriptions: Vec<Subscription>,
+    _poll: Task<()>,
 }
 
-impl App {
-    pub fn new(s: Sources) -> Self {
-        Self {
+impl Console {
+    pub fn new(s: Sources, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let search = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Filter by intent, summary, key or signature  ( / )")
+        });
+        let table = cx.new(|cx| {
+            TableState::new(LogTable::default(), window, cx)
+                .row_header(false)
+                .col_movable(false)
+                .sortable(false)
+                .col_selectable(false)
+                .loop_selection(false)
+        });
+        let subscriptions = vec![
+            cx.subscribe_in(&search, window, |this, _, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.rebuild(cx);
+                }
+            }),
+            cx.subscribe_in(&table, window, |this, table, event, _, cx| {
+                if let TableEvent::SelectRow(ix) = event {
+                    this.selected = table.read(cx).delegate().rows.get(*ix).map(|r| r.entry);
+                    cx.notify();
+                }
+            }),
+        ];
+        let poll = cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(POLL_EVERY).await;
+                if this.update(cx, Self::tick).is_err() {
+                    break;
+                }
+            }
+        });
+        let focus = cx.focus_handle();
+        window.focus(&table.focus_handle(cx), cx);
+        let mut this = Self {
             config: s.config,
             config_path: s.config_path,
             config_error: s.config_error,
@@ -61,37 +263,77 @@ impl App {
             log: Snapshot::empty(),
             log_error: None,
             stamp: None,
-            last_poll: None,
-            filter: None,
+            arrived: HashMap::new(),
+            key_filter: None,
             unresolved_only: false,
             raw: false,
             selected: None,
+            focus,
+            search,
+            table,
+            _subscriptions: subscriptions,
+            _poll: poll,
+        };
+        this.read_log();
+        this.rebuild(cx);
+        this
+    }
+
+    /// Takes the latest health result and re-reads the log if it changed; redraws for the ages
+    /// and the fading highlight.
+    fn tick(&mut self, cx: &mut Context<Self>) {
+        if let Some(rx) = &self.health_rx {
+            while let Ok(h) = rx.try_recv() {
+                self.health = Some(h);
+            }
         }
+        if self.read_log() || self.arrived.values().any(|t| t.elapsed() < FRESH) {
+            self.arrived.retain(|_, t| t.elapsed() < FRESH);
+            self.rebuild(cx);
+        } else {
+            let now = unix_now();
+            self.table.update(cx, |t, cx| {
+                t.delegate_mut().now = now;
+                cx.notify();
+            });
+        }
+        cx.notify();
     }
 
     /// Re-reads the audit log when its length or mtime changes. Read-only: never locks it.
-    fn poll(&mut self) {
-        if self.last_poll.is_some_and(|t| t.elapsed() < POLL_EVERY) {
-            return;
-        }
-        self.last_poll = Some(Instant::now());
+    /// Returns whether it changed.
+    fn read_log(&mut self) -> bool {
         let Some(path) = &self.audit_path else {
             self.log_error = Some("no state directory: pass --state-dir or --config".to_owned());
-            return;
+            return false;
         };
         let stamp = std::fs::metadata(path)
             .ok()
             .and_then(|m| Some((m.len(), m.modified().ok()?)));
         if stamp.is_some() && stamp == self.stamp {
-            return;
+            return false;
         }
         match Snapshot::read(path) {
             Ok(s) => {
+                let first = self.stamp.is_none();
+                let old = self.log.entries.len();
+                if !first && s.entries.len() > old {
+                    let now = Instant::now();
+                    for i in old..s.entries.len() {
+                        self.arrived.insert(i, now);
+                    }
+                } else if s.entries.len() < old {
+                    self.arrived.clear();
+                }
                 self.log = s;
                 self.log_error = None;
                 self.stamp = stamp;
+                true
             }
-            Err(e) => self.log_error = Some(format!("reading {}: {e}", path.display())),
+            Err(e) => {
+                self.log_error = Some(format!("reading {}: {e}", path.display()));
+                false
+            }
         }
     }
 
@@ -101,6 +343,7 @@ impl App {
             if !keys.iter().any(|k| k.name == name) {
                 keys.push(config::Key {
                     name,
+                    pubkey: None,
                     class: "not in config".to_owned(),
                     approval: "?".to_owned(),
                     rate_limit_per_minute: config::DEFAULT_RATE_PER_MINUTE,
@@ -111,97 +354,8 @@ impl App {
         keys
     }
 
-    fn status_bar(&self, ui: &mut egui::Ui) {
-        ui.horizontal_wrapped(|ui| {
-            match (&self.url, &self.health) {
-                (None, _) => ui.label("serve: not configured"),
-                (Some(u), None) => ui.label(format!("serve {u}: checking")),
-                (Some(u), Some(Health::Up)) => {
-                    ui.label(RichText::new(format!("serve {u}: up")).color(GOOD))
-                }
-                (Some(u), Some(Health::Down(e))) => ui
-                    .label(RichText::new(format!("serve {u}: down")).color(BAD))
-                    .on_hover_text(e),
-            };
-            ui.separator();
-            match &self.log.chain {
-                Chain::Ok => ui.label(
-                    RichText::new(format!(
-                        "audit chain ok, {} entries",
-                        self.log.entries.len()
-                    ))
-                    .color(GOOD),
-                ),
-                Chain::Broken(line, why) => ui.label(
-                    RichText::new(format!("audit chain broken at line {line}: {why}")).color(BAD),
-                ),
-            };
-            let unresolved = self
-                .log
-                .entries
-                .iter()
-                .filter(|e| self.log.unresolved(e))
-                .count();
-            if unresolved > 0 {
-                ui.separator();
-                ui.label(RichText::new(format!("{unresolved} unresolved")).color(WARN))
-                    .on_hover_text("Sent with no known outcome: reconcile before retrying.");
-            }
-            for err in [&self.config_error, &self.log_error].into_iter().flatten() {
-                ui.separator();
-                ui.label(RichText::new(err).color(BAD));
-            }
-        });
-        ui.horizontal_wrapped(|ui| {
-            ui.weak(format!(
-                "config: {}   audit: {}",
-                self.config_path
-                    .as_ref()
-                    .map_or_else(|| "none".to_owned(), |p| p.display().to_string()),
-                self.audit_path
-                    .as_ref()
-                    .map_or_else(|| "none".to_owned(), |p| p.display().to_string()),
-            ));
-        });
-    }
-
-    fn keys_panel(&mut self, ui: &mut egui::Ui, now: u64) {
-        ui.heading("Keys");
-        if ui
-            .selectable_label(self.filter.is_none(), "All keys")
-            .clicked()
-        {
-            self.filter = None;
-        }
-        ui.separator();
-        for k in self.keys() {
-            let u = self.log.usage(&k.name, k.daily_lamport_cap, now);
-            let selected = self.filter.as_deref() == Some(k.name.as_str());
-            if ui
-                .selectable_label(selected, RichText::new(&k.name).strong())
-                .clicked()
-            {
-                self.filter = if selected { None } else { Some(k.name.clone()) };
-            }
-            ui.label(format!("{} key, approval {}", k.class, k.approval));
-            let rate = format!("rate {}/{} per minute", u.recent, k.rate_limit_per_minute);
-            ui.label(rate);
-            ui.add(
-                egui::ProgressBar::new(fraction(u.spent, k.daily_lamport_cap)).text(format!(
-                    "{} / {} ZINK in 24 h",
-                    zink(u.spent),
-                    zink(k.daily_lamport_cap)
-                )),
-            );
-            if u.unresolved > 0 {
-                ui.label(RichText::new(format!("{} unresolved", u.unresolved)).color(WARN));
-            }
-            ui.separator();
-        }
-    }
-
-    /// Rows newest first, one per signature unless `raw`, after the key and unresolved filters.
-    fn visible_rows(&self) -> Vec<Row> {
+    /// Rows newest first, one per signature unless `raw`, after the key, unresolved and text filters.
+    fn visible_rows(&self, needle: &str) -> Vec<Row> {
         let rows: Vec<Row> = if self.raw {
             (0..self.log.entries.len())
                 .map(|entry| Row {
@@ -216,438 +370,597 @@ impl App {
             .rev()
             .filter(|r| {
                 self.log.entries.get(r.entry).is_some_and(|e| {
-                    self.filter.as_ref().is_none_or(|f| &e.key == f)
+                    self.key_filter.as_ref().is_none_or(|f| &e.key == f)
                         && (!self.unresolved_only || self.log.unresolved(e))
+                        && matches(e, needle)
                 })
             })
             .collect()
     }
 
-    fn entries_table(&mut self, ui: &mut egui::Ui, now: u64) {
-        ui.horizontal(|ui| {
-            ui.heading("Audit log");
-            ui.checkbox(&mut self.unresolved_only, "unresolved only");
-            ui.checkbox(&mut self.raw, "raw entries")
-                .on_hover_text("One row per audit entry, as the hash chain stores them, instead of one per signature.");
-            if let Some(f) = &self.filter {
-                ui.label(format!("key: {f}"));
-            }
-        });
-        let rows = self.visible_rows();
-        if rows.is_empty() {
-            ui.add_space(24.0);
-            ui.vertical_centered(|ui| {
-                ui.weak(if self.log.entries.is_empty() {
-                    "No entries yet: the log fills as the agent checks and signs."
-                } else {
-                    "No entries match the filters."
-                });
-            });
-            return;
-        }
-        let mut clicked = None;
-        let mut table = TableBuilder::new(ui)
-            .striped(true)
-            .sense(egui::Sense::click())
-            .column(Column::initial(70.0))
-            .column(Column::initial(110.0));
-        if self.raw {
-            table = table.column(Column::initial(90.0));
-        }
-        let mut titles = vec!["age", "key"];
-        if self.raw {
-            titles.push("command");
-        }
-        titles.extend(["outcome", "intent / summary"]);
-        table
-            .column(Column::initial(90.0))
-            .column(Column::remainder().clip(true))
-            .header(20.0, |mut h| {
-                for title in titles {
-                    h.col(|ui| {
-                        ui.strong(title);
-                    });
-                }
+    /// Rebuilds the table's rows and columns, keeping the selected entry selected.
+    #[expect(
+        clippy::needless_pass_by_ref_mut,
+        reason = "Entity::update needs &mut; the lint does not see through it"
+    )]
+    fn rebuild(&mut self, cx: &mut Context<Self>) {
+        let needle = self.search.read(cx).value().to_lowercase();
+        let rows: Vec<RowView> = self
+            .visible_rows(&needle)
+            .into_iter()
+            .filter_map(|r| {
+                let e = self.log.entries.get(r.entry)?;
+                let unresolved = self.log.unresolved(e);
+                let arrived = [Some(r.entry), r.intent]
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|i| self.arrived.get(&i).copied())
+                    .max();
+                Some(RowView {
+                    entry: r.entry,
+                    ts: e.ts,
+                    key: e.key.clone().into(),
+                    command: e.command.clone().into(),
+                    outcome: outcome_label(e, unresolved).into(),
+                    tone: Tone::of(e, unresolved),
+                    change: e
+                        .balance_change
+                        .map_or_else(|| "-".to_owned(), signed_zink)
+                        .trim_end_matches(" ZINK")
+                        .to_owned()
+                        .into(),
+                    intent: e.intent.clone().map(Into::into),
+                    summary: shorten_addresses(&e.summary).into(),
+                    arrived,
+                })
             })
-            .body(|body| {
-                body.rows(18.0, rows.len(), |mut row| {
-                    let Some(r) = rows.get(row.index()) else {
-                        return;
-                    };
-                    let Some(e) = self.log.entries.get(r.entry) else {
-                        return;
-                    };
-                    row.set_selected(self.selected == Some(r.entry));
-                    let unresolved = self.log.unresolved(e);
-                    row.col(|ui| {
-                        ui.label(age(now, e.ts));
-                    });
-                    row.col(|ui| {
-                        ui.label(&e.key);
-                    });
-                    if self.raw {
-                        row.col(|ui| {
-                            ui.label(&e.command);
-                        });
-                    }
-                    row.col(|ui| {
-                        ui.label(
-                            RichText::new(outcome_label(e, unresolved))
-                                .color(outcome_color(e, unresolved)),
-                        );
-                    });
-                    row.col(|ui| {
-                        let summary = shorten_addresses(&e.summary);
-                        match &e.intent {
-                            Some(intent) => {
-                                ui.label(intent);
-                                ui.weak(summary);
-                            }
-                            None => {
-                                ui.label(summary);
-                            }
-                        }
-                    });
-                    if row.response().clicked() {
-                        clicked = Some(r.entry);
-                    }
-                });
-            });
-        if let Some(i) = clicked {
-            self.selected = if self.selected == Some(i) {
-                None
-            } else {
-                Some(i)
-            };
+            .collect();
+        let selected_ix = self
+            .selected
+            .and_then(|s| rows.iter().position(|r| r.entry == s));
+        let show_key = self.key_filter.is_none() && self.keys().len() > 1;
+        let raw = self.raw;
+        let now = unix_now();
+        self.table.update(cx, |t, cx| {
+            let previous = t.selected_row();
+            let d = t.delegate_mut();
+            d.rows = rows;
+            d.now = now;
+            d.set_columns(show_key, raw);
+            t.refresh(cx);
+            if let Some(ix) = selected_ix {
+                if previous != Some(ix) {
+                    t.set_selected_row(ix, cx);
+                }
+            } else if previous.is_some() {
+                t.clear_selection(cx);
+            }
+            cx.notify();
+        });
+    }
+
+    fn close_detail(&mut self, cx: &mut Context<Self>) {
+        self.selected = None;
+        self.table.update(cx, TableState::clear_selection);
+        cx.notify();
+    }
+
+    fn on_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let typing = self.search.focus_handle(cx).is_focused(window);
+        match ev.keystroke.key.as_str() {
+            "escape" if typing => {
+                window.focus(&self.table.focus_handle(cx), cx);
+                cx.stop_propagation();
+            }
+            "escape" if self.selected.is_some() => {
+                self.close_detail(cx);
+                cx.stop_propagation();
+            }
+            "/" if !typing => {
+                self.search.update(cx, |s, cx| s.focus(window, cx));
+                cx.stop_propagation();
+            }
+            _ => {}
         }
     }
 
-    /// The selected row: what was signed, what happened, and the entries that record it.
-    fn detail(&mut self, ui: &mut egui::Ui, now: u64, row: Row) {
-        let Some(e) = self.log.entries.get(row.entry).cloned() else {
-            return;
+    fn status_bar(&self, cx: &App) -> impl IntoElement {
+        let t = cx.theme();
+        let (serve, serve_color) = match (&self.url, &self.health) {
+            (None, _) => ("serve: not configured".to_owned(), t.muted_foreground),
+            (Some(u), None) => (format!("serve {u}: checking"), t.muted_foreground),
+            (Some(u), Some(Health::Up)) => (format!("serve {u}: up"), t.success),
+            (Some(u), Some(Health::Down(e))) => (format!("serve {u}: down ({e})"), t.danger),
         };
-        let intent = row.intent.and_then(|i| self.log.entries.get(i)).cloned();
-        let unresolved = self.log.unresolved(&e);
+        let (chain, chain_color) = match &self.log.chain {
+            Chain::Ok => (
+                format!("audit chain ok, {} entries", self.log.entries.len()),
+                t.success,
+            ),
+            Chain::Broken(line, why) => (
+                format!("audit chain broken at line {line}: {why}"),
+                t.danger,
+            ),
+        };
+        let unresolved = self
+            .log
+            .entries
+            .iter()
+            .filter(|e| self.log.unresolved(e))
+            .count();
+        let paths = format!(
+            "config: {}    audit: {}",
+            self.config_path
+                .as_ref()
+                .map_or_else(|| "none".to_owned(), |p| p.display().to_string()),
+            self.audit_path
+                .as_ref()
+                .map_or_else(|| "none".to_owned(), |p| p.display().to_string()),
+        );
+        v_flex()
+            .px_3()
+            .py_2()
+            .gap_1()
+            .border_b_1()
+            .border_color(t.border)
+            .child(
+                h_flex()
+                    .gap_4()
+                    .text_sm()
+                    .child(div().text_color(serve_color).child(serve))
+                    .child(div().text_color(chain_color).child(chain))
+                    .when(unresolved > 0, |d| {
+                        d.child(div().text_color(t.warning).child(format!(
+                            "{unresolved} unresolved: reconcile before retrying"
+                        )))
+                    })
+                    .children(self.log.entries.last().map(|e| {
+                        div()
+                            .text_color(t.muted_foreground)
+                            .child(format!("last activity {}", age(unix_now(), e.ts)))
+                    }))
+                    .children(
+                        [&self.config_error, &self.log_error]
+                            .into_iter()
+                            .flatten()
+                            .map(|err| div().text_color(t.danger).child(err.clone())),
+                    ),
+            )
+            .child(div().text_xs().text_color(t.muted_foreground).child(paths))
+    }
+
+    fn keys_panel(&self, cx: &Context<Self>) -> impl IntoElement {
+        let now = unix_now();
+        let t = cx.theme().clone();
+        let explorer = self.config.explorer_url.clone();
+        let mut panel = v_flex().size_full().p_3().gap_3().child(
+            h_flex()
+                .justify_between()
+                .child(div().text_lg().child("Keys"))
+                .child(
+                    Button::new("all-keys")
+                        .small()
+                        .ghost()
+                        .label("All keys")
+                        .disabled(self.key_filter.is_none())
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.key_filter = None;
+                            this.rebuild(cx);
+                        })),
+                ),
+        );
+        for (ix, k) in self.keys().into_iter().enumerate() {
+            panel = panel.child(self.key_card(ix, &k, now, &t, explorer.as_deref(), cx));
+        }
+        panel
+    }
+
+    /// A key's class, pubkey, last activity and limits; click to filter the log by it.
+    fn key_card(
+        &self,
+        ix: usize,
+        k: &config::Key,
+        now: u64,
+        t: &Theme,
+        explorer: Option<&str>,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let u = self.log.usage(&k.name, k.daily_lamport_cap, now);
+        let selected = self.key_filter.as_deref() == Some(k.name.as_str());
+        let last = self
+            .log
+            .entries
+            .iter()
+            .rev()
+            .find(|e| e.key == k.name)
+            .map(|e| e.ts);
+        let name = k.name.clone();
+        let recent = u64::try_from(u.recent).unwrap_or(u64::MAX);
+        v_flex()
+            .id(("key", ix))
+            .p_2()
+            .gap_1()
+            .rounded_md()
+            .border_1()
+            .border_color(if selected { t.primary } else { t.border })
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.key_filter = if this.key_filter.as_deref() == Some(name.as_str()) {
+                    None
+                } else {
+                    Some(name.clone())
+                };
+                this.rebuild(cx);
+            }))
+            .child(div().font_semibold().child(k.name.clone()))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(t.muted_foreground)
+                    .child(format!("{} key, approval {}", k.class, k.approval)),
+            )
+            .children(k.pubkey.clone().map(|pk| {
+                h_flex()
+                    .gap_2()
+                    .text_xs()
+                    .child(
+                        div()
+                            .font_family(t.mono_font_family.clone())
+                            .child(shorten_addresses(&pk)),
+                    )
+                    .child(Clipboard::new(("copy-key", ix)).value(pk.clone()))
+                    .children(explorer.as_ref().map(|base| {
+                        Link::new(("key-link", ix))
+                            .href(format!("{base}/address/{pk}"))
+                            .child("explorer ↗")
+                    }))
+            }))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(t.muted_foreground)
+                    .child(last.map_or_else(
+                        || "no activity yet".to_owned(),
+                        |ts| format!("last activity {}", age(now, ts)),
+                    )),
+            )
+            .child(limit_bar(
+                ("rate", ix),
+                format!("rate {} / {} per minute", u.recent, k.rate_limit_per_minute),
+                fraction(recent, u64::from(k.rate_limit_per_minute)),
+                t,
+            ))
+            .child(limit_bar(
+                ("cap", ix),
+                format!(
+                    "{} / {} ZINK in 24 h",
+                    zink(u.spent),
+                    zink(k.daily_lamport_cap)
+                ),
+                fraction(u.spent, k.daily_lamport_cap),
+                t,
+            ))
+            .when(u.unresolved > 0, |d| {
+                d.child(
+                    div()
+                        .text_xs()
+                        .text_color(t.warning)
+                        .child(format!("{} unresolved", u.unresolved)),
+                )
+            })
+    }
+
+    fn log_panel(&self, cx: &Context<Self>) -> impl IntoElement {
+        v_flex()
+            .size_full()
+            .child(
+                h_flex()
+                    .p_2()
+                    .gap_3()
+                    .child(div().text_lg().child("Audit log"))
+                    .child(
+                        Checkbox::new("unresolved-only")
+                            .label("unresolved only")
+                            .checked(self.unresolved_only)
+                            .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                                this.unresolved_only = *checked;
+                                this.rebuild(cx);
+                            })),
+                    )
+                    .child(
+                        Checkbox::new("raw")
+                            .label("raw entries")
+                            .checked(self.raw)
+                            .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                                this.raw = *checked;
+                                this.rebuild(cx);
+                            })),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .child(Input::new(&self.search).small().cleanable(true)),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .child(DataTable::new(&self.table).stripe(true).bordered(false)),
+            )
+    }
+
+    /// The selected row: what was signed, what happened, and the entries that record it.
+    fn detail(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let i = self.selected?;
+        let e = self.log.entries.get(i)?;
+        let intent = if self.raw {
+            None
+        } else {
+            self.log
+                .rows()
+                .into_iter()
+                .find(|r| r.entry == i)
+                .and_then(|r| r.intent)
+                .and_then(|j| self.log.entries.get(j))
+        };
+        let unresolved = self.log.unresolved(e);
+        let now = unix_now();
+        let t = cx.theme().clone();
+        let [what, result, integrity] = self.detail_fields(e, intent, now, &t);
+        Some(
+            v_flex()
+                .id("detail")
+                .size_full()
+                .p_3()
+                .gap_3()
+                .overflow_y_scrollbar()
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .child(
+                            div()
+                                .text_lg()
+                                .text_color(Tone::of(e, unresolved).color(cx))
+                                .child(outcome_label(e, unresolved)),
+                        )
+                        .child(
+                            Button::new("close")
+                                .small()
+                                .ghost()
+                                .label("close  esc")
+                                .on_click(cx.listener(|this, _, _, cx| this.close_detail(cx))),
+                        ),
+                )
+                .when(unresolved, |d| {
+                    d.child(
+                        div()
+                            .text_color(t.warning)
+                            .child("Sent with no known outcome: reconcile before retrying."),
+                    )
+                })
+                .when(e.command != "sign" && e.command != SIGN_INTENT, |d| {
+                    d.child(
+                        div()
+                            .text_color(t.muted_foreground)
+                            .child(format!("command: {}", e.command)),
+                    )
+                })
+                .child(section("What", what, &t))
+                .child(section("Result", result, &t))
+                .child(section("Integrity", integrity, &t))
+                .into_any_element(),
+        )
+    }
+
+    /// The detail panel's sections: what was signed, what happened, and the chain hashes.
+    fn detail_fields(
+        &self,
+        e: &Entry,
+        intent: Option<&Entry>,
+        now: u64,
+        t: &Theme,
+    ) -> [Vec<AnyElement>; 3] {
         let explorer = self.config.explorer_url.clone();
         let link = |path: &str, value: &str| {
             explorer
                 .as_ref()
                 .map(|base| format!("{base}/{path}/{value}"))
         };
-        ui.horizontal(|ui| {
-            ui.heading("Entry");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .button("close")
-                    .on_hover_text("Close (click the row again)")
-                    .clicked()
-                {
-                    self.selected = None;
-                }
-            });
-        });
-        ui.label(
-            RichText::new(outcome_label(&e, unresolved))
-                .color(outcome_color(&e, unresolved))
-                .strong(),
-        );
-        if unresolved {
-            ui.label(
-                RichText::new("Sent with no known outcome: reconcile before retrying.").color(WARN),
-            );
+        let mut what = vec![text_field("intent", e.intent.as_deref().unwrap_or("-"), t)];
+        what.push(text_field(
+            "summary (from the builder, not verified)",
+            &e.summary,
+            t,
+        ));
+        for (n, p) in e.programs.iter().enumerate() {
+            what.push(id_field(
+                ("program", n),
+                "program",
+                p,
+                link("address", p),
+                t,
+            ));
         }
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            section(ui, "What", |ui| {
-                text_field(ui, "intent", e.intent.as_deref().unwrap_or("-"));
-                text_field(ui, "summary", &e.summary)
-                    .on_hover_text("Written by the payload's builder; the signer does not verify it.");
-                for p in &e.programs {
-                    id_field(ui, "program", p, link("address", p));
-                }
-            });
-            section(ui, "Result", |ui| {
-                text_field(ui, "key", &e.key);
-                if let Some(i) = &intent {
-                    text_field(ui, "sent", &when(now, i.ts));
-                }
-                text_field(ui, if intent.is_some() { "settled" } else { "time" }, &when(now, e.ts));
-                if let Some(d) = &e.detail {
-                    text_field(ui, "detail", d);
-                }
-                if let Some(sig) = &e.signature {
-                    id_field(ui, "signature", sig, link("tx", sig));
-                }
-                if let Some(slot) = e.slot {
-                    id_field(ui, "slot", &slot.to_string(), link("block", &slot.to_string()));
-                }
-                if let Some(d) = e.balance_change {
-                    text_field(ui, "balance change", &signed_zink(d));
-                }
-                if let Some(d) = intent.as_ref().and_then(|i| i.balance_change) {
-                    text_field(ui, "reserved", &signed_zink(d))
-                        .on_hover_text("The simulated spend the signer reserved against the daily cap before sending.");
-                }
-            });
-            section(ui, "Integrity", |ui| {
-                id_field(ui, "payload hash", &e.payload_hash, None);
-                id_field(ui, "entry hash", &e.hash, None);
-                id_field(ui, "previous hash", &e.prev, None);
-                if let Some(i) = &intent {
-                    id_field(ui, "intent entry hash", &i.hash, None);
-                }
-            });
-        });
+        let mut result = vec![text_field("key", &e.key, t)];
+        if let Some(i) = intent {
+            result.push(text_field("sent", &when(now, i.ts), t));
+        }
+        result.push(text_field(
+            if intent.is_some() { "settled" } else { "time" },
+            &when(now, e.ts),
+            t,
+        ));
+        if let Some(d) = &e.detail {
+            result.push(text_field("detail", d, t));
+        }
+        if let Some(sig) = &e.signature {
+            result.push(id_field(("sig", 0), "signature", sig, link("tx", sig), t));
+        }
+        if let Some(slot) = e.slot {
+            let slot = slot.to_string();
+            result.push(id_field(
+                ("slot", 0),
+                "slot",
+                &slot,
+                link("block", &slot),
+                t,
+            ));
+        }
+        if let Some(d) = e.balance_change {
+            result.push(text_field("balance change", &signed_zink(d), t));
+        }
+        if let Some(d) = intent.and_then(|i| i.balance_change) {
+            result.push(text_field(
+                "reserved against the daily cap",
+                &signed_zink(d),
+                t,
+            ));
+        }
+        let mut integrity = vec![
+            id_field(("h", 0), "payload hash", &e.payload_hash, None, t),
+            id_field(("h", 1), "entry hash", &e.hash, None, t),
+            id_field(("h", 2), "previous hash", &e.prev, None, t),
+        ];
+        if let Some(i) = intent {
+            integrity.push(id_field(("h", 3), "intent entry hash", &i.hash, None, t));
+        }
+        [what, result, integrity]
     }
 }
 
-/// A collapsible group of fields.
-fn section(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui)) {
-    egui::CollapsingHeader::new(RichText::new(title).strong())
-        .default_open(true)
-        .show(ui, add);
+impl Render for Console {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _ = window;
+        let detail = self.detail(cx);
+        let t = cx.theme();
+        v_flex()
+            .size_full()
+            .bg(t.background)
+            .text_color(t.foreground)
+            .track_focus(&self.focus)
+            .on_key_down(cx.listener(Self::on_key))
+            .child(self.status_bar(cx))
+            .child(
+                h_resizable("main")
+                    .child(
+                        resizable_panel().size(px(300.0)).child(
+                            div()
+                                .id("keys")
+                                .size_full()
+                                .overflow_y_scrollbar()
+                                .child(self.keys_panel(cx)),
+                        ),
+                    )
+                    .child(resizable_panel().child(self.log_panel(cx)))
+                    .child(
+                        resizable_panel()
+                            .size(px(460.0))
+                            .visible(detail.is_some())
+                            .children(detail),
+                    ),
+            )
+    }
+}
+
+/// Whether an entry's intent, summary, key, signature or outcome contains `needle` (lowercase).
+fn matches(e: &Entry, needle: &str) -> bool {
+    needle.is_empty()
+        || [
+            e.intent.as_deref(),
+            Some(e.summary.as_str()),
+            Some(e.key.as_str()),
+            e.signature.as_deref(),
+            Some(e.outcome.as_str()),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|s| s.to_lowercase().contains(needle))
+}
+
+/// A label, then a thin bar coloured by how close it is to the limit.
+fn limit_bar(
+    id: (&'static str, usize),
+    label: String,
+    fraction: f32,
+    t: &Theme,
+) -> impl IntoElement {
+    let color = if fraction >= 1.0 {
+        t.danger
+    } else if fraction >= 0.8 {
+        t.warning
+    } else {
+        t.success
+    };
+    v_flex().gap_1().child(div().text_xs().child(label)).child(
+        Progress::new(id)
+            .value(fraction * 100.0)
+            .color(color)
+            .h(px(4.0)),
+    )
+}
+
+/// A titled group of fields.
+fn section(title: &str, fields: Vec<AnyElement>, t: &Theme) -> impl IntoElement {
+    v_flex()
+        .gap_2()
+        .child(
+            div()
+                .text_sm()
+                .font_semibold()
+                .pb_1()
+                .border_b_1()
+                .border_color(t.border)
+                .child(title.to_owned()),
+        )
+        .children(fields)
 }
 
 /// A label over a plain value: intents, summaries, times and amounts.
-fn text_field(ui: &mut egui::Ui, name: &str, value: &str) -> egui::Response {
-    ui.weak(name);
-    labelled(ui, RichText::new(value))
+fn text_field(name: &str, value: &str, t: &Theme) -> AnyElement {
+    v_flex()
+        .child(
+            div()
+                .text_xs()
+                .text_color(t.muted_foreground)
+                .child(name.to_owned()),
+        )
+        .child(div().child(value.to_owned()))
+        .into_any_element()
 }
 
 /// A label over a monospace identifier (address, signature, slot, hash); with `url`, a copy button
 /// and a link out.
-fn id_field(ui: &mut egui::Ui, name: &str, value: &str, url: Option<String>) -> egui::Response {
-    ui.horizontal(|ui| {
-        ui.weak(name);
-        if let Some(u) = url {
-            if ui.small_button("copy").clicked() {
-                ui.ctx().copy_text(value.to_owned());
-            }
-            ui.hyperlink_to("explorer ↗", u);
-        }
-    });
-    labelled(ui, RichText::new(value).monospace())
-}
-
-fn labelled(ui: &mut egui::Ui, value: RichText) -> egui::Response {
-    let r = ui.add(egui::Label::new(value).wrap());
-    ui.add_space(4.0);
-    r
-}
-
-impl eframe::App for App {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.poll();
-        if let Some(rx) = &self.health_rx {
-            while let Ok(h) = rx.try_recv() {
-                self.health = Some(h);
-            }
-        }
-        // Keeps the log poll and the ages moving without input.
-        ui.ctx().request_repaint_after(POLL_EVERY);
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs());
-
-        egui::Panel::top("status").show(ui, |ui| self.status_bar(ui));
-        egui::Panel::left("keys")
-            .resizable(true)
-            .default_size(280.0)
-            .show(ui, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| self.keys_panel(ui, now));
-            });
-        if let Some(i) = self.selected {
-            // In the merged view the selection is the final entry; find its intent.
-            let row = if self.raw {
-                None
-            } else {
-                self.log.rows().into_iter().find(|r| r.entry == i)
-            }
-            .unwrap_or(Row {
-                entry: i,
-                intent: None,
-            });
-            egui::Panel::right("detail")
-                .resizable(true)
-                .default_size(420.0)
-                .show(ui, |ui| self.detail(ui, now, row));
-        }
-        egui::CentralPanel::default().show(ui, |ui| self.entries_table(ui, now));
-    }
-}
-
-fn outcome_color(e: &Entry, unresolved: bool) -> Color32 {
-    if unresolved {
-        return WARN;
-    }
-    match e.outcome.as_str() {
-        "confirmed" | "ok" => GOOD,
-        "failed" | "refused" | "error" => BAD,
-        _ => Color32::GRAY,
-    }
-}
-
-/// What a row's outcome means: a merged sign whose intent was pending reads as its final outcome.
-fn outcome_label(e: &Entry, unresolved: bool) -> String {
-    if unresolved && e.command == crate::log::SIGN_INTENT {
-        "unresolved".to_owned()
-    } else {
-        e.outcome.clone()
-    }
-}
-
-/// UTC date and time, and the age.
-fn when(now: u64, ts: u64) -> String {
-    format!(
-        "{} UTC ({})",
-        utc(ts).unwrap_or_else(|| ts.to_string()),
-        age(now, ts)
-    )
-}
-
-/// `YYYY-MM-DD HH:MM:SS` for a unix time, by the civil-from-days algorithm (Howard Hinnant).
-fn utc(ts: u64) -> Option<String> {
-    let days = ts.checked_div(86_400)?;
-    let secs = ts.checked_rem(86_400)?;
-    let z = days.checked_add(719_468)?;
-    let era = z.checked_div(146_097)?;
-    let doe = z.checked_rem(146_097)?;
-    let yoe = doe
-        .checked_sub(doe.checked_div(1_460)?)?
-        .checked_add(doe.checked_div(36_524)?)?
-        .checked_sub(doe.checked_div(146_096)?)?
-        .checked_div(365)?;
-    let doy = doe.checked_sub(
-        yoe.checked_mul(365)?
-            .checked_add(yoe.checked_div(4)?)?
-            .checked_sub(yoe.checked_div(100)?)?,
-    )?;
-    let mp = doy.checked_mul(5)?.checked_add(2)?.checked_div(153)?;
-    let day = doy
-        .checked_sub(mp.checked_mul(153)?.checked_add(2)?.checked_div(5)?)?
-        .checked_add(1)?;
-    let month = if mp < 10 {
-        mp.checked_add(3)?
-    } else {
-        mp.checked_sub(9)?
+fn id_field(
+    id: (&'static str, usize),
+    name: &str,
+    value: &str,
+    url: Option<String>,
+    t: &Theme,
+) -> AnyElement {
+    let header = h_flex()
+        .gap_2()
+        .text_xs()
+        .child(div().text_color(t.muted_foreground).child(name.to_owned()));
+    let header = match url {
+        Some(u) => header
+            .child(Clipboard::new(("copy", id.1)).value(value.to_owned()))
+            .child(Link::new(id).href(u).child("explorer ↗")),
+        None => header,
     };
-    let year = yoe
-        .checked_add(era.checked_mul(400)?)?
-        .checked_add(u64::from(month <= 2))?;
-    Some(format!(
-        "{year:04}-{month:02}-{day:02} {:02}:{:02}:{:02}",
-        secs.checked_div(3_600)?,
-        secs.checked_rem(3_600)?.checked_div(60)?,
-        secs.checked_rem(60)?
-    ))
+    v_flex()
+        .child(header)
+        .child(
+            div()
+                .font_family(t.mono_font_family.clone())
+                .text_sm()
+                .child(value.to_owned()),
+        )
+        .into_any_element()
 }
 
-/// Base58 runs of 32 to 44 characters (addresses, signatures are longer) shortened to `GwDE…dFvg`.
-fn shorten_addresses(text: &str) -> String {
-    const BASE58: &str = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-    let mut out = String::with_capacity(text.len());
-    let mut run = String::new();
-    let flush = |run: &mut String, out: &mut String| {
-        let n = run.chars().count();
-        if (32..=44).contains(&n) {
-            out.extend(run.chars().take(4));
-            out.push('…');
-            out.extend(run.chars().skip(n.saturating_sub(4)));
-        } else {
-            out.push_str(run);
-        }
-        run.clear();
-    };
-    for c in text.chars() {
-        if BASE58.contains(c) {
-            run.push(c);
-        } else {
-            flush(&mut run, &mut out);
-            out.push(c);
-        }
-    }
-    flush(&mut run, &mut out);
-    out
-}
-
-/// A signed lamport change as ZINK, e.g. `-0.000005 ZINK`.
-fn signed_zink(lamports: i64) -> String {
-    let sign = if lamports < 0 { "-" } else { "" };
-    format!("{sign}{} ZINK", zink(lamports.unsigned_abs()))
-}
-
-fn age(now: u64, ts: u64) -> String {
-    let s = now.saturating_sub(ts);
-    let (n, unit) = match s {
-        0..60 => (s, "s"),
-        60..3_600 => (s.checked_div(60).unwrap_or(0), "m"),
-        3_600..86_400 => (s.checked_div(3_600).unwrap_or(0), "h"),
-        _ => (s.checked_div(86_400).unwrap_or(0), "d"),
-    };
-    format!("{n}{unit} ago")
-}
-
-/// Lamports as ZINK with up to 9 decimals, trailing zeros trimmed.
-fn zink(lamports: u64) -> String {
-    let whole = lamports.checked_div(LAMPORTS_PER_ZINK).unwrap_or(0);
-    let frac = lamports.checked_rem(LAMPORTS_PER_ZINK).unwrap_or(0);
-    if frac == 0 {
-        return whole.to_string();
-    }
-    let digits = format!("{frac:09}");
-    format!("{whole}.{}", digits.trim_end_matches('0'))
-}
-
-/// `part / whole` clamped to 0..=1, to a tenth of a percent, without float casts.
-fn fraction(part: u64, whole: u64) -> f32 {
-    let permille = part
-        .saturating_mul(1_000)
-        .checked_div(whole)
-        .unwrap_or(1_000)
-        .min(1_000);
-    f32::from(u16::try_from(permille).unwrap_or(1_000)) / 1_000.0
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn formats_zink() {
-        assert_eq!(zink(50_000_000), "0.05");
-        assert_eq!(zink(1_000_000_000), "1");
-        assert_eq!(zink(1_000_000_001), "1.000000001");
-    }
-
-    #[test]
-    fn clamps_fraction() {
-        assert!((fraction(5, 10) - 0.5).abs() < f32::EPSILON);
-        assert!((fraction(20, 10) - 1.0).abs() < f32::EPSILON);
-        assert!((fraction(1, 0) - 1.0).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn formats_utc() {
-        assert_eq!(utc(0).as_deref(), Some("1970-01-01 00:00:00"));
-        assert_eq!(utc(951_782_400).as_deref(), Some("2000-02-29 00:00:00"));
-        assert_eq!(utc(1_794_087_225).as_deref(), Some("2026-11-07 21:33:45"));
-    }
-
-    #[test]
-    fn shortens_addresses_only() {
-        assert_eq!(
-            shorten_addresses(
-                "Supply fleet at GwDEHQLddZwKoHzpv3DmtJqPkgZQ8iAv27zwQVCKdFvg: load 1880 fuel"
-            ),
-            "Supply fleet at GwDE…dFvg: load 1880 fuel"
-        );
-        assert_eq!(shorten_addresses("Daily check-in"), "Daily check-in");
-        assert_eq!(signed_zink(-5_000), "-0.000005 ZINK");
-    }
-
-    #[test]
-    fn ages() {
-        assert_eq!(age(100, 100), "0s ago");
-        assert_eq!(age(7_200, 0), "2h ago");
-    }
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
 }

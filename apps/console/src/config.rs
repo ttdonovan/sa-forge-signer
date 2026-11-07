@@ -25,6 +25,7 @@ struct Raw {
 #[derive(Debug, Deserialize)]
 struct RawKey {
     class: Option<String>,
+    pubkey: Option<String>,
     approval: Option<String>,
     rate_limit_per_minute: Option<u32>,
     daily_lamport_cap: Option<u64>,
@@ -38,6 +39,7 @@ struct RawServe {
 #[derive(Debug, Clone)]
 pub struct Key {
     pub name: String,
+    pub pubkey: Option<String>,
     pub class: String,
     pub approval: String,
     pub rate_limit_per_minute: u32,
@@ -82,6 +84,7 @@ impl Config {
                 });
                 Key {
                     name,
+                    pubkey: k.pubkey,
                     class,
                     approval,
                     rate_limit_per_minute: k

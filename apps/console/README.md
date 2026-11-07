@@ -1,6 +1,6 @@
 # sa-forge-signer-console
 
-A read-only desktop view of a running [sa-forge-signer](../../README.md): `serve` health, the audit log and per-key limits. It never signs, approves or writes anything. Early spike.
+A read-only desktop view, built with GPUI Kit, of a running [sa-forge-signer](../../README.md): `serve` health, the audit log and per-key limits. It never signs, approves or writes anything. Early spike.
 
 ```sh
 # From a release tag, or from a checkout
