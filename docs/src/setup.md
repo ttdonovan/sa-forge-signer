@@ -6,6 +6,17 @@ description: "Path A (the agent holds the wallet) or Path B (the human holds it 
 
 Which keys the agent's signer holds decides what the agent can do alone and what it can lose.
 
+```mermaid
+flowchart LR
+    subgraph A["Path A: the signer holds"]
+        W["Wallet key (index 0)<br/>profile authority, confirm"] -->|grants and funds| SA["Session key (index 1)<br/>SAGE-scoped"]
+    end
+    subgraph B["Path B: the signer holds"]
+        SB["Session key only<br/>narrow mask, short expiry"]
+    end
+    H["The human's wallet<br/>(outside the signer)"] -->|grants and funds| SB
+```
+
 ## Path A: the agent holds the wallet
 
 The agent's wallet is the profile authority (key index 0) and holds its assets; a SAGE-scoped session key (index 1) signs day-to-day play. The wallet key signs onboarding, deposits and withdrawals, vault funding and session-key funding.
@@ -21,5 +32,17 @@ The human sets up the profile, character, faction, vault and deposits with their
 **Recommendation:** Path B for mainnet and anything of value; Path A for testnet.
 
 ## Isolation
+
+```mermaid
+flowchart LR
+    AG[Agent] -->|build_*| FM["forge-mcp<br/>(local or hosted)"]
+    FM -->|unsigned payload| AG
+    subgraph SU["The signer's OS user or container"]
+        SG[sa-forge-signer] --- KC[("Keys, config<br/>and audit log")]
+    end
+    AG -->|"check / sign<br/>(CLI, HTTP or MCP)"| SG
+    SG -->|signed transaction| RPC[Z.ink RPC]
+    AG -.-x|must not read| KC
+```
 
 The signer only protects anything if the agent cannot read its keys or config. Run it as a different OS user or in a container, with the key directory and config owned by that user. If the agent can read the key file, the checks are advice, not a control.

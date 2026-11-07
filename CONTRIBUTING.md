@@ -5,7 +5,7 @@
 - Rust, at the version pinned in `rust-toolchain.toml`
 - [just](https://github.com/casey/just)
 - [shellcheck](https://www.shellcheck.net/) and [cargo-audit](https://github.com/rustsec/rustsec/tree/main/cargo-audit), for `just check`
-- [mdBook](https://rust-lang.github.io/mdBook/) 0.5 and [mdbook-llms](https://github.com/ttdonovan/mdbook-llms), for the docs: `just docs-setup` installs both from GitHub
+- [mdBook](https://rust-lang.github.io/mdBook/) 0.5, [mdbook-mermaid](https://github.com/badboy/mdbook-mermaid) and [mdbook-llms](https://github.com/ttdonovan/mdbook-llms), for the docs: `just docs-setup` installs all three
 
 ## Workflow
 

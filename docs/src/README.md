@@ -10,10 +10,11 @@ Most chapters are written here, in `docs/src/`. A few include a file from where 
 
 ## Building it
 
-The book is built with [mdBook](https://rust-lang.github.io/mdBook/) and [mdbook-llms](https://github.com/ttdonovan/mdbook-llms). Install the tools once, from GitHub, with `just docs-setup`:
+The book is built with [mdBook](https://rust-lang.github.io/mdBook/), [mdbook-mermaid](https://github.com/badboy/mdbook-mermaid) for the diagrams, and [mdbook-llms](https://github.com/ttdonovan/mdbook-llms). Install the tools once, from GitHub, with `just docs-setup`:
 
 ```sh
 cargo install --locked mdbook --version 0.5.2
+cargo install --locked mdbook-mermaid --version 0.17.1
 cargo install --locked --git https://github.com/ttdonovan/mdbook-llms --tag v0.4.0
 ```
 

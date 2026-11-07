@@ -30,10 +30,11 @@ docs-serve:
 docs-check:
     @scripts/ci/docs-check.sh
 
-# Install the book's tools: mdBook 0.5 and mdbook-llms (with mdbook-strip-frontmatter) from GitHub
+# Install the book's tools: mdBook 0.5, mdbook-mermaid and mdbook-llms (with mdbook-strip-frontmatter) from GitHub
 [group('docs')]
 docs-setup:
     cargo install --locked mdbook --version 0.5.2
+    cargo install --locked mdbook-mermaid --version 0.17.1
     cargo install --locked --git https://github.com/ttdonovan/mdbook-llms --tag v0.4.0
 
 # Local git review (review, diff, approve, ...), self-contained in scripts/git-review/.

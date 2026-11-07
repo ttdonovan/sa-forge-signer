@@ -10,8 +10,14 @@ build-dir = "../target/docs"
 
 [preprocessor.strip-frontmatter]
 
+# HTML only: the llms output keeps each diagram as a fenced mermaid block
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+renderers = ["html"]
+
 [output.html]
 git-repository-url = "https://github.com/ttdonovan/sa-forge-signer"
+additional-js = ["mermaid.min.js", "mermaid-init.js"]
 
 [output.llms]
 sizes = true
