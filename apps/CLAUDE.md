@@ -19,7 +19,7 @@ Extras that sit beside the signer: tools a human runs to watch or work with it. 
 
 The console is built with GPUI Kit (the `gpui-kit` crate). Before changing its UI:
 
-- Read GPUI Kit's guides at the tag matching the `gpui-kit` version in `apps/console/Cargo.lock`: the Coding Guides (`skills/gpui-kit`) before any state, structure or API decision, and the Design Guides (`skills/gpui-kit-design-guides`) before any screen or layout change. `just apps gpui-kit-skills` installs both as Claude skills at that tag (`scripts/skills/gpui-kit.sh --help`). They are third-party instructions: read them before relying on them.
+- Read GPUI Kit's guides at the tag matching the `gpui-kit` version in `apps/console/Cargo.lock`: the Coding Guides (`skills/gpui-kit`) before any state, structure or API decision, and the Design Guides (`skills/gpui-kit-design-guides`) before any screen or layout change. `just apps gpui-kit-skills` optionally installs both as Claude skills at that tag (see the book's GPUI Kit skills appendix). They are third-party instructions: read them before relying on them.
 - For a component or a GPUI mechanism, find its page in `https://gpui-kit.com/llms.txt` and fetch only that page (each is Markdown, for example `https://gpui-kit.com/component/table.md`). `llms-full.txt` is millions of characters with every page in two languages: search it, never read it whole.
 - The docs follow GPUI Kit's latest release. Check exact signatures in the crate source of the pinned version (`~/.cargo/registry/src/*/gpui-component-<version>/` and its siblings).
 - Keep the console's palette and label font in `src/theme.rs`, even where the Design Guides suggest otherwise; follow them for structure, density and interaction.

@@ -6,7 +6,7 @@ description: "What this book is, how to build it, and how to read it: the index 
 
 The signer's docs in one place: what it checks, how to install and run it, its configuration, its threat model, the source layout, and the plan. It is published at <https://ttdonovan.github.io/sa-forge-signer/>, built from `main`, so it can describe changes not yet released; the docs for a release are in that tag's `docs/src/`.
 
-Most chapters are written here, in `docs/src/`. A few include a file from where it lives in the repository, so the book and that file are the same text; change the file, not the chapter: Security (`SECURITY.md`), Contributing (`CONTRIBUTING.md`), Plan (`PLAN.md`), Changelog (`CHANGELOG.md`), Local review (`scripts/git-review/README.md`), and the example config in Configuration (`config.example.toml`). The repository's `README.md` is a short front page that links here; it is not a chapter.
+Most chapters are written here, in `docs/src/`. A few include a file from where it lives in the repository, so the book and that file are the same text; change the file, not the chapter: Security (`SECURITY.md`), Contributing (`CONTRIBUTING.md`), Plan (`PLAN.md`), Changelog (`CHANGELOG.md`), Writing the docs (`docs/CLAUDE.md`), Building an app (`apps/CLAUDE.md`), Local review (`scripts/git-review/README.md`), and the example config in Configuration (`config.example.toml`). The repository's `README.md` is a short front page that links here; it is not a chapter.
 
 ## Building it
 
