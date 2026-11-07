@@ -5,3 +5,5 @@ The docs are a book for agents. Run `just docs` (install the tools once with `ju
 Most chapters are written in `docs/src/`; a few include a file from the repository (`SECURITY.md`, `CONTRIBUTING.md`, `PLAN.md`, `CHANGELOG.md`, ...): change those files, not their chapters or the copies in `target/`. `README.md` is a short front page linking to the published book, not a chapter. Links point at files in the repository, never into `target/`. A new doc gets a chapter in `docs/src/` and a line in `docs/src/SUMMARY.md`; run `just docs-check` after changing any doc.
 
 `just check` is the gate, the same as CI. Commit messages use Conventional Commits (`feat:`, `fix:`, `!` for a breaking change) and end with a full stop: release-plz reads them to bump the version, so see `CONTRIBUTING.md` for what counts as breaking.
+
+Working in `docs/` or `apps/`: read `docs/CLAUDE.md` or `apps/CLAUDE.md` first.
