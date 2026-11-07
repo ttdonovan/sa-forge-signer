@@ -15,6 +15,8 @@ Installs or updates sa-forge-signer and sa-forge-signer-console from a release t
   --tag vX.Y.Z           Release to install (default: the latest tag)
   --prefix DIR           Install into DIR/bin (default: ~/.local)
   --from-source          Build the signer from the tag instead of downloading the prebuilt binary
+  --from-checkout        Build both from the repository this script is in (its working tree,
+                         uncommitted changes included) instead of a release; ignores --tag
   --no-console           Install only the signer
   --console-ref BRANCH   Build the console from a branch instead of the tag (for an unreleased console)
   --skip-attestation     Check only SHA256SUMS, not the build provenance (no gh needed)
@@ -39,6 +41,7 @@ have() { command -v "$1" >/dev/null 2>&1; }
 tag=""
 prefix="$HOME/.local"
 from_source=0
+from_checkout=0
 console=1
 console_ref=""
 attest=1
@@ -49,6 +52,7 @@ while [ $# -gt 0 ]; do
         --tag) tag="${2:?--tag needs a value}"; shift 2 ;;
         --prefix) prefix="${2:?--prefix needs a value}"; shift 2 ;;
         --from-source) from_source=1; shift ;;
+        --from-checkout) from_checkout=1; shift ;;
         --no-console) console=0; shift ;;
         --console-ref) console_ref="${2:?--console-ref needs a value}"; shift 2 ;;
         --skip-attestation) attest=0; shift ;;
@@ -173,6 +177,34 @@ if [ "$uninstall" = 1 ]; then
     exit 0
 fi
 
+path_note() {
+    case ":$PATH:" in
+        *":$bin:"*) ;;
+        *) say "note: $bin is not on PATH; add it to your shell profile" ;;
+    esac
+}
+
+if [ "$from_checkout" = 1 ]; then
+    root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+    [ -f "$root/Cargo.toml" ] && [ -d "$root/src" ] || die "$root is not a sa-forge-signer checkout"
+    have cargo || die "cargo is needed to build from the checkout (https://rustup.rs)"
+    mkdir -p "$bin"
+    say "building from $root ($(git -C "$root" describe --tags --always --dirty 2>/dev/null || echo "not a git checkout")), installing into $bin"
+    cargo install --locked --force --path "$root" --root "$prefix"
+    say "installed $("$bin/sa-forge-signer" --version)"
+    if [ "$console" = 1 ]; then
+        if [ -f "$root/apps/console/Cargo.toml" ]; then
+            cargo install --locked --force --path "$root/apps/console" --root "$prefix"
+            say "installed sa-forge-signer-console"
+        else
+            say "skipping the console: this checkout does not include it"
+        fi
+    fi
+    path_note
+    say "config, keys and audit log: ~/.config/sa-forge-signer/ (see the book's Configuration chapter)"
+    exit 0
+fi
+
 [ -n "$tag" ] || tag="$(latest_tag)"
 [ -n "$tag" ] || die "could not find a release tag at $URL"
 mkdir -p "$bin"
@@ -203,8 +235,5 @@ if [ "$console" = 1 ]; then
     fi
 fi
 
-case ":$PATH:" in
-    *":$bin:"*) ;;
-    *) say "note: $bin is not on PATH; add it to your shell profile" ;;
-esac
+path_note
 say "config, keys and audit log: ~/.config/sa-forge-signer/ (see the book's Configuration chapter)"

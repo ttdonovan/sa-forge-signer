@@ -14,6 +14,7 @@ Not published on crates.io: install from GitHub, pinned to a release tag (`vX.Y.
 # From a checkout, or download the script from the tag you want and read it first
 scripts/installer/install.sh                    # the latest tag
 scripts/installer/install.sh --tag vX.Y.Z --no-console
+scripts/installer/install.sh --from-checkout    # build both from this checkout's working tree, not a release
 scripts/installer/install.sh --help             # --prefix, --from-source, --console-ref, --skip-attestation, --force
 ```
 
