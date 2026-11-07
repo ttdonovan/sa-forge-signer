@@ -44,5 +44,5 @@ Releases are made by [release-plz](https://release-plz.dev/) from the commit mes
 Install a release from its tag:
 
 ```sh
-cargo install --locked --git https://github.com/ttdonovan/sa-forge-signer --tag vX.Y.Z
+cargo install --locked --git https://github.com/ttdonovan/sa-forge-signer --tag vX.Y.Z sa-forge-signer
 ```

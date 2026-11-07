@@ -18,7 +18,7 @@ A thin, self-hosted signer for agents that play SAGE C4 on Z.ink. The agent buil
 Not published on crates.io. Each [release](https://github.com/ttdonovan/sa-forge-signer/releases) has prebuilt binaries for Linux (static, x86_64 and aarch64) and macOS, with checksums and a build provenance attestation; or build a release tag from source (Rust 1.89 or later):
 
 ```sh
-cargo install --locked --git https://github.com/ttdonovan/sa-forge-signer --tag vX.Y.Z
+cargo install --locked --git https://github.com/ttdonovan/sa-forge-signer --tag vX.Y.Z sa-forge-signer
 ```
 
 [Install and update](https://ttdonovan.github.io/sa-forge-signer/install.html) covers verifying a binary, finding the latest tag, and updating.

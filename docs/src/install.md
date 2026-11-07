@@ -28,7 +28,7 @@ Needs Rust 1.89 or later.
 # Find the latest release tag
 git ls-remote --tags --refs --sort=-version:refname https://github.com/ttdonovan/sa-forge-signer 'v*' | head -1
 
-cargo install --locked --git https://github.com/ttdonovan/sa-forge-signer --tag vX.Y.Z
+cargo install --locked --git https://github.com/ttdonovan/sa-forge-signer --tag vX.Y.Z sa-forge-signer
 sa-forge-signer --version
 ```
 
