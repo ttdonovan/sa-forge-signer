@@ -13,4 +13,5 @@
 - [Contributing](contributing.md)
 - [Code map](code-map.md)
 - [Plan](plan.md)
+- [Changelog](changelog.md)
 - [Local review with git-review](git-review.md)
