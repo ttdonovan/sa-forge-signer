@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1](https://github.com/ttdonovan/sa-forge-signer/compare/v0.4.0...v0.4.1) - 2026-11-07
+
+### Added
+
+- add an optional explorer_url to the config, defaulting to the cluster's explorer, used for the explorer link in sign reports and shown by config show.
+- make key import of the same keypair a no-op that prints its config block again, still refusing a different key.
+- point config init and config show at key import as well as key new.
+- add key import, which copies an existing Solana CLI keypair file into the key store and prints its config block.
+- add config init, which writes the annotated example config, and config show, which prints the config as the signer resolves it.
+
+### Other
+
+- replace the bare allow on unless_stale with an expect that gives its reason.
+- move the Working on it chapters into docs/src/dev.
+- add a Getting started chapter with the full config for each setup, the minimal serve table, and a table of every setting and its default.
+- name the package in the cargo install command, which cargo requires once the repository holds a second binary package.
+- split the README into book chapters, and slim the README to a front page.
+- build, attest and attach prebuilt binaries to each release.
+- list the crate's files in Cargo.toml, so CI and docs-only changes do not trigger a release.
+- group only minor and patch Dependabot updates, so each major bump gets its own PR.
+- *(deps)* bump Swatinem/rust-cache
+
 ## [0.4.0](https://github.com/ttdonovan/sa-forge-signer/releases/tag/v0.4.0) - 2026-11-07
 
 ### Fixed
