@@ -1,0 +1,11 @@
+# Plain file names and no injected inline scripts: js/boot.js loads the app under a strict CSP.
+[build]
+target = "index.html"
+dist = "dist"
+filehash = false
+inject_scripts = false
+
+[serve]
+addresses = ["127.0.0.1"]
+port = 8791
+no_autoreload = true

@@ -7,7 +7,8 @@ cluster = "zink-testnet"
 # key_dir = "keys"                 # 0700; one 0600 file per key
 # state_dir = "state"              # audit log
 
-# A SAGE-scoped session key (profile key index 1 or later). Signs without asking.
+# A SAGE-scoped session key. Signs without asking. The config holds no key index: the agent passes
+# the key's profile index (the next free one when granted, not always 1) as forge-mcp's keyIndex.
 # Paste the block `sa-forge-signer key new <name> --class session` prints, or uncomment and fill in.
 # [keys.alice-session]
 # class = "session"
