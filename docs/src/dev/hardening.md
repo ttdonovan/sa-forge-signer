@@ -48,6 +48,14 @@ flowchart TD
 
 **Today:** `checks::structural` is already pure over the message and a `Policy`. The new-accounts and token-account-owner checks, the limits and approval are not: they read the RPC or the audit log in the middle of `engine::preflight`.
 
+**Status: built.** How it differs from the proposal below:
+
+- `check` does not refuse a `deny` key: it previews it as `approval` in `sign_preview`, and its `outcome` stays `ok`. That keeps this change non-breaking; refusing it in `check` remains open.
+- The facts step reads the RPC one fact at a time in check order (genesis hash, then partial signers, then token-account owners), and `evaluate` runs after each read. A refusal is decided only when every check before it has passed, so a refusal decided without the RPC (a wrong fee payer, a `deny` key, a halt) is still made before any RPC call, as before. `Facts` holds the key's usage (signs in the last minute, lamports spent or reserved in 24 h) already counted from the audit log at the time it was read, so `evaluate` needs no clock.
+- `check`'s preview of the cap uses `AfterSimulation` with `check`'s own simulated spend and fee once its simulation passes, so it matches what `sign` would compute for the same transaction.
+- The approval prompt, the stale-blockhash and duplicate-signature guards stay in the engine: they rebuild the transaction rather than judge it. After them, `sign` refreshes the usage from the audit log and evaluates again at `AfterSimulation`.
+- `check` now reads the audit log and the halt record, for the preview: an unreadable audit log fails a `check` as it already failed a `sign`.
+
 **Change:**
 
 - A `policy` module with one function, `evaluate(message, &Facts, &KeyPolicy, Stage) -> Verdict`. `Facts` holds everything read from outside, gathered first: the owners of token-account owners, whether partial signers exist, the key's signs in the last minute and lamports spent or reserved in 24 h (from the audit log), the halt state (proposal 3), and later the profile snapshot (proposal 4) and program deploy slots (proposal 8). `Stage` is `Check`, `BeforeSimulation` or `AfterSimulation` (with the simulated spend and fee for the cap).

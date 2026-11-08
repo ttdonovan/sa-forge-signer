@@ -5,9 +5,11 @@ mod checks;
 mod cluster;
 mod config;
 mod engine;
+mod facts;
 mod halt;
 mod keystore;
 mod payload;
+mod policy;
 mod rpc;
 mod serve;
 #[cfg(test)]

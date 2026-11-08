@@ -9,7 +9,7 @@ use solana_message::compiled_instruction::CompiledInstruction;
 
 use crate::cluster::{ASSOCIATED_TOKEN_PROGRAM, SYSTEM_PROGRAM, TOKEN_2022_PROGRAM, TOKEN_PROGRAM};
 
-#[derive(Debug, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Refusal {
     pub check: &'static str,
     pub detail: String,
@@ -48,14 +48,27 @@ const ATA_SYSTEM: usize = 4;
 const ATA_TOKEN_PROGRAM: usize = 5;
 const ATA_ACCOUNTS: usize = 6;
 
-/// Runs every check that needs only the message; returns the names of the checks passed.
+/// Every check that needs only the message, by name, in order.
+pub fn each(message: &Message, policy: &Policy<'_>) -> [(&'static str, Result<(), Refusal>); 5] {
+    [
+        ("fee_payer", fee_payer(message, policy)),
+        ("programs", programs(message, policy)),
+        ("tokens", tokens(message)),
+        ("system", system(message, policy)),
+        ("signers", signers(message, policy)),
+    ]
+}
+
+/// Runs every check that needs only the message; returns the names of the checks passed, or the
+/// first refusal.
+#[cfg(test)]
 pub fn structural(message: &Message, policy: &Policy<'_>) -> Result<Vec<&'static str>, Refusal> {
-    fee_payer(message, policy)?;
-    programs(message, policy)?;
-    tokens(message)?;
-    system(message, policy)?;
-    signers(message, policy)?;
-    Ok(vec!["fee_payer", "programs", "tokens", "system", "signers"])
+    let mut passed = Vec::new();
+    for (name, result) in each(message, policy) {
+        result?;
+        passed.push(name);
+    }
+    Ok(passed)
 }
 
 fn fee_payer(message: &Message, policy: &Policy<'_>) -> Result<(), Refusal> {

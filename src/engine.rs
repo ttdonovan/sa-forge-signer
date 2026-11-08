@@ -16,11 +16,14 @@ use solana_transaction::Transaction;
 use zeroize::Zeroizing;
 
 use crate::audit::{Audit, Entry, KeyLock};
-use crate::checks::{self, Policy, Refusal, refuse as refusal};
+use crate::checks::{Refusal, refuse as refusal};
+use crate::cluster::Cluster;
 use crate::config::{Approval, Config, KeyConfig};
+use crate::facts::{self, DAY};
 use crate::halt;
 use crate::keystore::KeyStore;
 use crate::payload::Payload;
+use crate::policy::{self, Facts, KeyPolicy, Request, Stage, Verdict};
 use crate::rpc::{Chain, Rpc, RpcError, Simulation, Status, delta};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -82,6 +85,8 @@ pub struct Report {
 pub struct SignPreview {
     /// The sign-only checks that would refuse, in order.
     pub refusals: Vec<Refusal>,
+    /// A `confirm` key: `sign` waits for a person at the terminal.
+    pub needs_approval: bool,
 }
 
 impl Report {
@@ -121,10 +126,8 @@ pub enum Mode {
     Sign { intent: Option<String> },
 }
 
-const MINUTE: u64 = 60;
 /// Audit command of the entry written before a transaction is sent.
-const SIGN_INTENT: &str = "sign-intent";
-const DAY: u64 = 86_400;
+pub const SIGN_INTENT: &str = "sign-intent";
 const POLL: Duration = Duration::from_secs(1);
 const MAX_RPC_FAILURES: u32 = 60;
 /// Longest a sign waits to prove an outcome. Expiry is proven against the finalized tip, which
@@ -177,9 +180,6 @@ pub fn execute(
         );
         (Report::new(&payload, key).refused(&r), false)
     };
-    if !signing && authorized {
-        report.sign_preview = Some(sign_preview(cfg, key)?);
-    }
     if signing {
         let entry = Entry {
             ts: now(),
@@ -210,15 +210,6 @@ pub fn execute(
     Ok((report, sent, !payload.partial_signers.is_empty()))
 }
 
-/// What `sign` would refuse now that `check` does not: a halt.
-fn sign_preview(cfg: &Config, key: &KeyConfig) -> Result<SignPreview> {
-    let mut refusals = Vec::new();
-    if let Some(h) = halt::active(&cfg.state_dir, &key.name)? {
-        refusals.push(h.refusal(&key.name));
-    }
-    Ok(SignPreview { refusals })
-}
-
 /// Under the key lock, after an `unknown` sign is logged: halts the key once its streak reaches
 /// `halt_after_unknown`, and says so in the report. The sign's own outcome stands either way.
 fn after_unknown(cfg: &Config, key: &KeyConfig, report: &mut Report) {
@@ -241,109 +232,84 @@ fn after_unknown(cfg: &Config, key: &KeyConfig, report: &mut Report) {
     });
 }
 
-/// Checks that need no key. Returns the compiled message, its blockhash and last valid block height.
-fn preflight(
-    cfg: &Config,
-    rpc: &Rpc,
-    key: &KeyConfig,
-    payload: &Payload,
-    signing: bool,
-    passed: &mut Vec<&'static str>,
-) -> Result<Result<(Message, Hash, u64), Refusal>> {
-    if payload.fee_payer != key.pubkey {
-        return Ok(Err(refusal(
-            "fee_payer",
-            format!(
-                "payload fee payer {} is not key {:?} ({})",
-                payload.fee_payer, key.name, key.pubkey
-            ),
-        )));
-    }
-    if signing && key.approval == Approval::Deny {
-        return Ok(Err(refusal(
-            "approval",
-            format!("key {:?} is set to deny", key.name),
-        )));
-    }
-    // Read under the key lock, so a halt written by any process stops the next sign.
-    if signing && let Some(h) = halt::active(&cfg.state_dir, &key.name)? {
-        return Ok(Err(h.refusal(&key.name)));
-    }
-    let genesis = rpc.genesis_hash()?;
-    if genesis != cfg.cluster.genesis_hash {
-        return Ok(Err(refusal(
-            "chain",
-            format!("RPC genesis hash {genesis} is not {}", cfg.cluster.name),
-        )));
-    }
-    passed.push("chain");
-
-    let (blockhash, last_valid) = rpc.latest_blockhash()?;
-    let message =
-        Message::new_with_blockhash(&payload.instructions, Some(&payload.fee_payer), &blockhash);
-    let partial = payload.partial_pubkeys();
-    let allowed = cfg.allowed_programs(key)?;
-    let policy = Policy {
-        signer: &key.pubkey,
-        allowed_programs: &allowed,
-        transfer_to: &key.transfer_to,
-        partial_signers: &partial,
-    };
-    match checks::structural(&message, &policy) {
-        Ok(checks) => passed.extend(checks),
-        Err(r) => return Ok(Err(r)),
-    }
-    if let Some(i) = rpc.accounts_exist(&partial)?.iter().position(|e| *e) {
-        let who = partial.get(i).map(ToString::to_string).unwrap_or_default();
-        return Ok(Err(refusal(
-            "new_accounts",
-            format!("partial signer {who} already exists on-chain"),
-        )));
-    }
-    passed.push("new_accounts");
-    if let Err(r) = ata_owners(cfg, rpc, &message, &policy)? {
-        return Ok(Err(r));
-    }
-    passed.push("ata_owners");
-    if signing {
-        // An early refusal only; the binding check is `within_cap` after the final simulation.
-        if let Err(r) = limits(&Audit::new(&cfg.state_dir).entries()?, key, now()) {
-            return Ok(Err(r));
-        }
-        passed.push("limits");
-    }
-    Ok(Ok((message, blockhash, last_valid)))
+/// The inputs of `policy::evaluate` for one payload and key, and the facts read so far. Kept from
+/// the checks before simulation to the cap after it, so both use the same function.
+struct Gate<'a> {
+    key: &'a KeyConfig,
+    cluster: &'static Cluster,
+    allowed: Vec<solana_address::Address>,
+    games: Vec<solana_address::Address>,
+    fee_payer: solana_address::Address,
+    partial: Vec<solana_address::Address>,
+    /// Compiled without a blockhash: no check depends on it.
+    message: Message,
+    facts: Facts,
 }
 
-/// An associated token account created for an owner other than the signing key or its transfer
-/// destinations must belong to a game account: an account owned by one of the cluster's built-in
-/// game programs (a character, a cargo cache), never one only a key's `extra_programs` owns. Its rent then stays where only game logic can move it, rather than
-/// in a wallet the requester could close the account from and reclaim the rent.
-fn ata_owners(
-    cfg: &Config,
-    rpc: &Rpc,
-    message: &Message,
-    policy: &Policy<'_>,
-) -> Result<Result<(), Refusal>> {
-    let owners = match checks::ata_owners(message, policy) {
-        Ok(o) => o,
-        Err(r) => return Ok(Err(r)),
-    };
-    if owners.is_empty() {
-        return Ok(Ok(()));
+impl<'a> Gate<'a> {
+    fn new(cfg: &Config, key: &'a KeyConfig, payload: &Payload) -> Result<Self> {
+        Ok(Self {
+            key,
+            cluster: cfg.cluster,
+            allowed: cfg.allowed_programs(key)?,
+            games: cfg.game_programs()?,
+            fee_payer: payload.fee_payer,
+            partial: payload.partial_pubkeys(),
+            message: Message::new(&payload.instructions, Some(&payload.fee_payer)),
+            facts: facts::local(&cfg.state_dir, key, now())?,
+        })
     }
-    let games = cfg.game_programs()?;
-    for (who, program) in owners.iter().zip(rpc.account_owners(&owners)?) {
-        if !program.is_some_and(|p| games.contains(&p)) {
-            return Ok(Err(refusal(
-                "ata_owners",
-                format!(
-                    "a token account would be created for {who}, which is neither this key, one of its transfer destinations, nor an account of a game program"
-                ),
-            )));
+
+    fn evaluate(&self, stage: Stage) -> Verdict {
+        let request = Request {
+            fee_payer: &self.fee_payer,
+            message: &self.message,
+            partial_signers: &self.partial,
+        };
+        let policy = KeyPolicy {
+            key: self.key,
+            cluster: self.cluster,
+            allowed_programs: &self.allowed,
+            game_programs: &self.games,
+        };
+        policy::evaluate(&request, &self.facts, &policy, stage)
+    }
+
+    /// Reads the RPC facts one at a time, in check order, until a refusal is decided or all are
+    /// read: a refusal the earlier checks decide is made before the next RPC call.
+    fn decide(&mut self, rpc: &Rpc, stage: Stage) -> Result<Verdict> {
+        loop {
+            let verdict = self.evaluate(stage);
+            if verdict.refusal().is_some() {
+                return Ok(verdict);
+            }
+            let request = Request {
+                fee_payer: &self.fee_payer,
+                message: &self.message,
+                partial_signers: &self.partial,
+            };
+            let policy = KeyPolicy {
+                key: self.key,
+                cluster: self.cluster,
+                allowed_programs: &self.allowed,
+                game_programs: &self.games,
+            };
+            if !facts::read_next(&mut self.facts, rpc, &request, &policy)? {
+                return Ok(verdict);
+            }
         }
     }
-    Ok(Ok(()))
+}
+
+/// `check` only: what `sign` would refuse now that `check` does not, from `verdict`.
+fn with_preview(mut report: Report, verdict: &Verdict, key: &KeyConfig, mode: &Mode) -> Report {
+    if matches!(mode, Mode::Check) {
+        report.sign_preview = Some(SignPreview {
+            refusals: verdict.sign_only_failures(),
+            needs_approval: key.approval == Approval::Confirm,
+        });
+    }
+    report
 }
 
 fn pipeline(
@@ -355,11 +321,22 @@ fn pipeline(
     let mut report = Report::new(payload, key);
     let signing = matches!(mode, Mode::Sign { .. });
     let rpc = Rpc::new(&cfg.rpc_url);
-    let (message, blockhash, mut last_valid) =
-        match preflight(cfg, &rpc, key, payload, signing, &mut report.checks)? {
-            Ok(v) => v,
-            Err(r) => return Ok((report.refused(&r), false)),
-        };
+    let mut gate = Gate::new(cfg, key, payload)?;
+    let verdict = gate.decide(
+        &rpc,
+        if signing {
+            Stage::BeforeSimulation
+        } else {
+            Stage::Check
+        },
+    )?;
+    report.checks = verdict.passed();
+    if let Some(r) = verdict.refusal() {
+        return Ok((with_preview(report.refused(r), &verdict, key, mode), false));
+    }
+    let (blockhash, mut last_valid) = rpc.latest_blockhash()?;
+    let message =
+        Message::new_with_blockhash(&payload.instructions, Some(&payload.fee_payer), &blockhash);
 
     let keypair = if signing {
         Some(load_key(cfg, key)?)
@@ -392,12 +369,16 @@ fn pipeline(
         report.detail.clone_from(&report.program_error);
         report.error = Some(err);
         report.logs = sim.logs;
-        return Ok((report, false));
+        return Ok((with_preview(report, &verdict, key, mode), false));
     }
     report.checks.push("simulation");
     if !signing {
         report.logs = sim.logs;
-        return Ok((report, false));
+        // The cap as `sign` would check it, against this simulation.
+        let after = gate.evaluate(Stage::AfterSimulation {
+            reserve: reservation(&report),
+        });
+        return Ok((with_preview(report, &after, key, mode), false));
     }
 
     let (tx, last_valid) =
@@ -408,11 +389,12 @@ fn pipeline(
             }
             Err(failed) => return Ok((failed, false)),
         };
-    let (tx, last_valid, reserve, report) =
-        match unique_within_cap(cfg, &rpc, key, payload, &signers, tx, last_valid, report)? {
-            Ok(v) => v,
-            Err(r) => return Ok((r, false)),
-        };
+    let (tx, last_valid, reserve, report) = match unique_within_cap(
+        cfg, &rpc, &mut gate, payload, &signers, tx, last_valid, report,
+    )? {
+        Ok(v) => v,
+        Err(r) => return Ok((r, false)),
+    };
     // Durable before anything is sent: if this process dies mid-confirmation, the intent (with
     // this transaction's reservation) is what the limits and the operator see.
     Audit::new(&cfg.state_dir).append(Entry {
@@ -454,13 +436,14 @@ fn pipeline(
 fn unique_within_cap(
     cfg: &Config,
     rpc: &Rpc,
-    key: &KeyConfig,
+    gate: &mut Gate<'_>,
     payload: &Payload,
     signers: &[&Keypair],
     tx: Transaction,
     last_valid: u64,
     report: Report,
 ) -> Result<std::result::Result<(Transaction, u64, u64, Report), Report>> {
+    let key = gate.key;
     let entries = Audit::new(&cfg.state_dir).entries()?;
     let now = now();
     let logged = |s: &str| seen(&entries, &key.name, s, now);
@@ -480,13 +463,18 @@ fn unique_within_cap(
         }
         Err(failed) => return Ok(Err(failed)),
     };
-    match cap_gate(&entries, key, &report, now) {
-        Ok(reserve) => {
-            report.checks.push("cap");
-            Ok(Ok((tx, last_valid, reserve, report)))
-        }
-        Err(r) => Ok(Err(report.refused(&r))),
+    // The same evaluation as before simulation, now with this transaction's reservation and
+    // the usage as of now; the earlier checks passed already and their facts are unchanged.
+    gate.facts.usage = facts::usage(&entries, key, now);
+    let reserve = reservation(&report);
+    if let Some(r) = gate.evaluate(Stage::AfterSimulation { reserve }).refusal() {
+        return Ok(Err(report.refused(r)));
     }
+    let Some(reserve) = reserve else {
+        return Ok(Err(report.refused(&policy::unbounded())));
+    };
+    report.checks.push("cap");
+    Ok(Ok((tx, last_valid, reserve, report)))
 }
 
 fn send_and_confirm(
@@ -861,107 +849,11 @@ fn confirm(report: &Report, key: &KeyConfig) -> Result<bool> {
     Ok(answer.trim() == "yes")
 }
 
-/// Rate and daily-spend limits from the audit log.
-///
-/// Every attempt counts toward the rate: final `sign` entries, plus intents that never got one
-/// (the process died mid-sign). Spend counts what each sent transaction cost when that is known
-/// (confirmed or failed, with metadata). When it is not known (the outcome is unknown, the
-/// metadata never arrived, or the process died), the intent's simulated spend is charged as a
-/// reservation, and with no simulation figure the whole daily cap is: an unresolved transaction
-/// may have landed, so it is never free. Returns the lamports spent or reserved in the last 24 h.
-fn limits(entries: &[Entry], key: &KeyConfig, now: u64) -> Result<u64, Refusal> {
-    let mine: Vec<&Entry> = entries.iter().filter(|e| e.key == key.name).collect();
-    let finals = || mine.iter().filter(|e| e.command == "sign");
-    let resolved = |sig: &str| finals().any(|e| e.signature.as_deref() == Some(sig));
-    let orphan_intents = || {
-        mine.iter().filter(|e| {
-            e.command == SIGN_INTENT && e.signature.as_deref().is_none_or(|s| !resolved(s))
-        })
-    };
-    let recent = finals()
-        .chain(orphan_intents())
-        .filter(|e| e.ts >= now.saturating_sub(MINUTE))
-        .count();
-    if recent >= usize::try_from(key.rate_limit_per_minute).unwrap_or(usize::MAX) {
-        return Err(refusal(
-            "limits",
-            format!("rate limit: {recent} signs in the last minute"),
-        ));
-    }
-    let cap = key.daily_lamport_cap;
-    let reservation = |sig: Option<&str>| -> u64 {
-        let intent = mine
-            .iter()
-            .find(|e| e.command == SIGN_INTENT && sig.is_some() && e.signature.as_deref() == sig);
-        match intent.map(|e| e.balance_change) {
-            Some(Some(d)) => spend(d),
-            _ => cap,
-        }
-    };
-    let day = |e: &&&Entry| e.ts >= now.saturating_sub(DAY);
-    let mut spent: u64 = 0;
-    for e in finals().filter(day) {
-        let cost = match e.outcome.as_str() {
-            "confirmed" | "failed" => e
-                .balance_change
-                .map_or_else(|| reservation(e.signature.as_deref()), spend),
-            // `expired` appears only in older logs, from a proof that could be wrong.
-            "unknown" | "expired" => reservation(e.signature.as_deref()),
-            // Refused or failed simulation: never sent.
-            _ => 0,
-        };
-        spent = spent.saturating_add(cost);
-    }
-    for e in orphan_intents().filter(day) {
-        spent = spent.saturating_add(e.balance_change.map_or(cap, spend));
-    }
-    if spent >= cap {
-        return Err(refusal(
-            "limits",
-            format!("daily cap: {spent} of {cap} lamports spent or reserved in 24 h"),
-        ));
-    }
-    Ok(spent)
-}
-
-/// The final limit check, made under the key lock against the simulation of the exact
-/// transaction about to be sent. Returns that transaction's reservation.
-fn cap_gate(entries: &[Entry], key: &KeyConfig, report: &Report, now: u64) -> Result<u64, Refusal> {
-    let reserve = reservation(report).ok_or_else(|| {
-        refusal(
-            "limits",
-            "the simulation did not report this key's balance, or the RPC gave no fee estimate, so the spend cannot be bounded"
-                .to_owned(),
-        )
-    })?;
-    within_cap(limits(entries, key, now)?, reserve, key.daily_lamport_cap)?;
-    Ok(reserve)
-}
-
 /// This transaction's reservation: its simulated spend plus its fee. Both must be known: the
 /// simulated balance usually already includes the fee, so adding it again over-reserves by one
 /// fee, but a missing fee is never assumed to be zero.
 fn reservation(report: &Report) -> Option<u64> {
-    Some(spend(report.balance_change?).saturating_add(report.fee?))
-}
-
-/// Refuses a transaction whose reservation would take the 24 h total past the cap.
-fn within_cap(spent: u64, reserve: u64, cap: u64) -> Result<(), Refusal> {
-    let total = spent.saturating_add(reserve);
-    if total > cap {
-        return Err(refusal(
-            "limits",
-            format!(
-                "daily cap: {spent} lamports spent or reserved in 24 h, plus {reserve} for this transaction, exceeds {cap}"
-            ),
-        ));
-    }
-    Ok(())
-}
-
-/// Lamports spent by a balance change (gains spend nothing).
-const fn spend(delta: i64) -> u64 {
-    if delta < 0 { delta.unsigned_abs() } else { 0 }
+    Some(facts::spend(report.balance_change?).saturating_add(report.fee?))
 }
 
 fn read_payload(arg: &str) -> Result<Zeroizing<String>> {
@@ -1037,6 +929,26 @@ mod tests {
             daily_lamport_cap: 1_000,
             halt_after_unknown: 3,
         }
+    }
+
+    /// The rate limit and the cap so far, as `sign` checks them before simulation.
+    fn limits(entries: &[Entry], key: &KeyConfig, now: u64) -> Result<u64, Refusal> {
+        let usage = facts::usage(entries, key, now);
+        policy::limits(usage, key).map(|()| usage.spent)
+    }
+
+    /// The cap after simulation; returns the transaction's reservation.
+    fn cap_gate(
+        entries: &[Entry],
+        key: &KeyConfig,
+        report: &Report,
+        now: u64,
+    ) -> Result<u64, Refusal> {
+        let usage = facts::usage(entries, key, now);
+        let reserve = reservation(report);
+        policy::limits(usage, key)?;
+        policy::cap(usage, key, reserve)?;
+        reserve.ok_or_else(policy::unbounded)
     }
 
     fn entry(ts: u64, change: i64) -> Entry {
@@ -1874,6 +1786,104 @@ mod tests {
         );
         let last = Audit::new(&home.cfg.state_dir).entries().unwrap();
         assert_eq!(last.last().unwrap().outcome, "refused");
+    }
+
+    fn previewed(r: &Report) -> Vec<&'static str> {
+        r.sign_preview
+            .as_ref()
+            .unwrap()
+            .refusals
+            .iter()
+            .map(|r| r.check)
+            .collect()
+    }
+
+    // Hardening proposal 1: a clean check that sign then refuses is previewed, and sign agrees.
+    #[test]
+    fn check_previews_the_rate_limit_that_sign_then_refuses() {
+        let home = crate::testrpc::Home::new("preview-rate", "rate_limit_per_minute = 1\n");
+        assert!(previewed(&check(&home)).is_empty());
+        assert_eq!(sign(&home).outcome, Outcome::Confirmed);
+        let c = check(&home);
+        assert_eq!((c.outcome, previewed(&c)), (Outcome::Ok, vec!["limits"]));
+        assert_eq!(sign(&home).failed_check, Some("limits"));
+    }
+
+    #[test]
+    fn check_previews_the_cap_against_its_own_simulation() {
+        // The mock simulates a spend of SPEND lamports with no fee.
+        let at = crate::testrpc::SPEND;
+        let home =
+            crate::testrpc::Home::new("preview-cap-ok", &format!("daily_lamport_cap = {at}\n"));
+        assert!(previewed(&check(&home)).is_empty());
+        let over = at - 1;
+        let home =
+            crate::testrpc::Home::new("preview-cap", &format!("daily_lamport_cap = {over}\n"));
+        let c = check(&home);
+        assert_eq!((c.outcome, previewed(&c)), (Outcome::Ok, vec!["limits"]));
+        let detail = &c.sign_preview.unwrap().refusals[0].detail;
+        assert!(detail.contains("for this transaction"), "{detail}");
+        let s = sign(&home);
+        assert_eq!(s.failed_check, Some("limits"));
+        assert_eq!(home.node.sends(), 0);
+    }
+
+    #[test]
+    fn check_previews_a_deny_key_without_refusing_it() {
+        let home = crate::testrpc::Home::new("preview-deny", "approval = \"deny\"\n");
+        let c = check(&home);
+        assert_eq!((c.outcome, previewed(&c)), (Outcome::Ok, vec!["approval"]));
+        assert_eq!(sign(&home).failed_check, Some("approval"));
+    }
+
+    #[test]
+    fn check_says_a_confirm_key_needs_approval() {
+        let home = crate::testrpc::Home::new("preview-confirm", "approval = \"confirm\"\n");
+        let p = check(&home).sign_preview.unwrap();
+        assert!(p.needs_approval && p.refusals.is_empty());
+        let auto = crate::testrpc::Home::new("preview-auto", "");
+        assert!(!check(&auto).sign_preview.unwrap().needs_approval);
+    }
+
+    #[test]
+    fn check_lists_every_sign_only_refusal_in_order() {
+        let home = crate::testrpc::Home::new(
+            "preview-all",
+            "approval = \"deny\"\nrate_limit_per_minute = 0\n",
+        );
+        halt_on(&home, Some("k"));
+        assert_eq!(previewed(&check(&home)), ["approval", "halt", "limits"]);
+    }
+
+    #[test]
+    fn a_refusal_decided_without_the_rpc_is_made_before_it() {
+        let home = crate::testrpc::Home::new("deny-offline", "approval = \"deny\"\n");
+        let text = std::fs::read_to_string(&home.path).unwrap();
+        let (_, rest) = text.split_once('\n').unwrap();
+        std::fs::write(
+            &home.path,
+            format!("rpc_url = \"http://127.0.0.1:9\"\n{rest}"),
+        )
+        .unwrap();
+        let offline = crate::config::Config::load(&home.path, true).unwrap();
+        let mode = Mode::Sign { intent: None };
+        let (r, _, _) = execute(&offline, None, &home.payload(1), &mode, None).unwrap();
+        assert_eq!(
+            r.failed_check,
+            Some("approval"),
+            "refused before any RPC call"
+        );
+        let foreign = crate::transfer::fund_payload(&home.pubkey, &home.pubkey, 1, "s");
+        let mut other = foreign.clone();
+        other["transaction"]["fee_payer"] =
+            Value::from(Address::new_from_array([7; 32]).to_string());
+        let (r, _, _) =
+            execute(&offline, Some("k"), &other.to_string(), &Mode::Check, None).unwrap();
+        assert_eq!(r.failed_check, Some("fee_payer"));
+        assert!(
+            execute(&offline, None, &foreign.to_string(), &Mode::Check, None).is_err(),
+            "the RPC is needed"
+        );
     }
 
     #[test]

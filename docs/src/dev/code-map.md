@@ -33,7 +33,9 @@ One binary crate; each module's `//!` comment is the authority if this page drif
 | `payload.rs` | The forge-mcp `build_*` payload (version 1): an instruction list, not a serialized transaction |
 | `transfer.rs` | Funding payloads: a plain System Program transfer in the same shape forge-mcp returns |
 | `checks.rs` | Structural checks on the compiled message; none decode game instructions |
-| `engine.rs` | The check and sign pipeline: simulate, limits, sign, send, confirm |
+| `policy.rs` | Every check `check` and `sign` make, as one pure `evaluate` over the request, the key's policy and `Facts`, at a stage (`Check`, `BeforeSimulation`, `AfterSimulation`); returns every result in order. New checks go here |
+| `facts.rs` | The reads behind `evaluate`: the halt, the key's usage from the audit log, and the RPC facts, read one at a time in check order |
+| `engine.rs` | The check and sign pipeline: gather facts and evaluate, simulate, approval, the blockhash and duplicate guards, sign, send, confirm |
 | `rpc.rs` | The minimal Solana JSON-RPC client: only the calls the signer needs |
 | `keystore.rs` | The file key store: `<key_dir>/<name>.json`, 0700 directory, 0600 files; key create, import and destroy |
 | `audit.rs` | The append-only, hash-chained JSONL audit log, and the per-key signing lock |
