@@ -4,7 +4,7 @@ Extras that sit beside the signer: tools a human runs to watch or work with it. 
 
 ## Rules every app keeps
 
-- **Never weaken the signer's isolation.** An app runs as the human, never the agent. It does not read keys, sign, or hold anything that can sign. It reads the signer's state and config read-only (or through `serve`'s routes) and never writes, locks or truncates them: write access to `state_dir` can rewrite the audit chain. Nothing an app adds may give the agent's OS user a path to the keys, config or state, or a way to approve a signature.
+- **Never weaken the signer's isolation.** An app runs as the human, never the agent. It does not read keys, sign, or hold anything that can sign. The grant page is no exception: the human's own wallet signs, and the page never holds or sees a key. It reads the signer's state and config read-only (or through `serve`'s routes) and never writes, locks or truncates them: write access to `state_dir` can rewrite the audit chain. Nothing an app adds may give the agent's OS user a path to the keys, config or state, or a way to approve a signature.
 - **Approval does not go through a terminal pane or anything the agent's user can script.** See "Typing into the approval terminal" in `SECURITY.md`.
 - **Stay out of the signer's build.** Each app has its own `[workspace]` table and `Cargo.lock`, so it is not a member of the root package, and its dependencies stay out of `just check`, CI, the release binaries and the Docker image. Do not add an app to any of them.
 - **Package names start with `sa-forge-signer-`** (for example `sa-forge-signer-console`), so they are not confused with other SAGE forge projects.

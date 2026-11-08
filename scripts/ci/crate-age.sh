@@ -18,7 +18,7 @@ read -r -a young_prefixes <<<"${ALLOW_YOUNG_PREFIXES:-}"
 # allowed_family <name>: whether name is in one of young_prefixes.
 allowed_family() {
     local p
-    for p in "${young_prefixes[@]}"; do
+    for p in ${young_prefixes[@]+"${young_prefixes[@]}"}; do
         [[ "$1" == "$p" || "$1" == "$p"-* ]] && return 0
     done
     return 1

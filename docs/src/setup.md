@@ -9,7 +9,7 @@ Which keys the agent's signer holds decides what the agent can do alone and what
 ```mermaid
 flowchart LR
     subgraph A["Path A: the signer holds"]
-        W["Wallet key (index 0)<br/>profile authority, confirm"] -->|grants and funds| SA["Session key (index 1)<br/>SAGE-scoped"]
+        W["Wallet key (index 0)<br/>profile authority, confirm"] -->|grants and funds| SA["Session key (index 1 or later)<br/>SAGE-scoped"]
     end
     subgraph B["Path B: the signer holds"]
         SB["Session key only<br/>narrow mask, short expiry"]
@@ -19,7 +19,7 @@ flowchart LR
 
 ## Path A: the agent holds the wallet
 
-The agent's wallet is the profile authority (key index 0) and holds its assets; a SAGE-scoped session key (index 1) signs day-to-day play. The wallet key signs onboarding, deposits and withdrawals, vault funding and session-key funding.
+The agent's wallet is the profile authority (key index 0) and holds its assets; a SAGE-scoped session key (a later index) signs day-to-day play. The wallet key signs onboarding, deposits and withdrawals, vault funding and session-key funding.
 
 > **Caution.** On mainnet this makes the agent's wallet a hot wallet. Anything that controls the agent, including a prompt injection in content it reads, can sign as the profile authority: withdraw assets, add an attacker's key, or drain the wallet. The signer cannot see what a wallet transaction does. `wallet` keys therefore default to `confirm` (a human approves each signature on the terminal). That terminal must be one the agent cannot type into: an agent running as the same user as a tmux session or a scriptable terminal app can answer the prompt itself (see [Security](security.md)). Keep only working balances in the agent's wallet. Path A suits testnet burners; on mainnet it is a deliberate, informed choice.
 

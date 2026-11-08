@@ -20,3 +20,12 @@ console-check:
 [positional-arguments]
 gpui-kit-skills *args:
     {{ source_directory() }}/../scripts/skills/gpui-kit.sh "$@"
+
+# Serve the grant page on http://127.0.0.1:8791 (needs trunk and the wasm32-unknown-unknown target)
+grant:
+    cd {{ source_directory() }}/grant && trunk serve --release --locked
+
+# The grant page's own gate: fmt, clippy on host and wasm (warnings are errors), tests, advisories, dependency age
+grant-check:
+    cd {{ source_directory() }}/grant && cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings && cargo clippy --target wasm32-unknown-unknown --locked -- -D warnings && cargo test --locked && cargo audit
+    {{ source_directory() }}/../scripts/ci/crate-age.sh {{ source_directory() }}/grant/Cargo.lock
