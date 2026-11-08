@@ -9,6 +9,8 @@ mod keystore;
 mod payload;
 mod rpc;
 mod serve;
+#[cfg(test)]
+mod testrpc;
 mod transfer;
 
 use std::path::PathBuf;

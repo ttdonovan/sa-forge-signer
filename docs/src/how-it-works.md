@@ -15,7 +15,7 @@ The signer is deliberately thin: it does not decode game instructions and needs 
 7. **Simulation** must succeed before anything is sent.
 8. **Limits:** a per-minute rate limit and a daily lamport cap per key, with signs serialized per key. The cap is checked against the simulation of the exact transaction about to be sent: what the key has spent or reserved in 24 h, plus this transaction's simulated spend and fee, must stay within it. A simulation that does not report the key's balance, or a missing fee estimate, is refused. The fee is quoted for the exact transaction sent, including after an approval rebuild. Each send is recorded first as an intent carrying that reservation; a spend whose outcome is not known is charged it.
 
-In `sign`, after the simulation come approval (for a `confirm` key, then a fresh blockhash and a new simulation), the blockhash check, and the daily cap against that final simulation; only then is an intent recorded and the transaction sent. Each step can end the request, and the outcome says which kind of step stopped it (see [Checking and signing](check-and-sign.md#outcomes)):
+In `sign`, after the simulation come approval (for a `confirm` key, then a fresh blockhash and a new simulation), the blockhash check, the duplicate check (a signature already in the audit log is re-signed once with a fresh blockhash, else refused), and the daily cap against that final simulation; only then is an intent recorded and the transaction sent. Each step can end the request, and the outcome says which kind of step stopped it (see [Checking and signing](check-and-sign.md#outcomes)):
 
 ```mermaid
 flowchart TD
@@ -24,8 +24,8 @@ flowchart TD
     PRE --> SIM[Simulate]
     SIM -->|the program rejects it| SF([simulation_failed, exit 11])
     SIM -->|check| OK([ok, exit 0])
-    SIM -->|sign| GATE["Approval, blockhash still valid,<br/>daily cap"]
-    GATE -->|"declined, still stale or over the cap:<br/>nothing sent"| R
+    SIM -->|sign| GATE["Approval, blockhash still valid,<br/>not a repeat, daily cap"]
+    GATE -->|"declined, still stale, a repeat<br/>or over the cap: nothing sent"| R
     GATE -->|the re-simulation fails| SF
     GATE --> INT[Record the intent in the audit log]
     INT --> SEND[Sign, send and poll]

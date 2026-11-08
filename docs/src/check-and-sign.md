@@ -38,6 +38,8 @@ The config lives at `~/.config/sa-forge-signer/config.toml` unless `--config` or
 
 Before anything is sent, the `blockhash` check compares the transaction's last valid height with the finalized height: a blockhash already past it can never land, whichever node reports the height (a lagging RPC node can hand out an expired blockhash). It is re-signed and simulated once with a fresh one; if that is expired too, the sign is refused and nothing is sent.
 
+The same instructions signed with the same blockhash give the same signature, so a payload sent twice within one blockhash would resend the first transaction, and the second sign would report the first one's outcome as its own. Before the intent is recorded, the `duplicate` check looks up the transaction's signature among the key's audit entries from the last 24 h. On a match it is re-signed and simulated once with a fresh blockhash; if the RPC returns the same blockhash again, the sign is refused with `failed_check` `blockhash`, nothing is sent, and a retry is safe.
+
 Exit code 13 (`expired`) is retired. An RPC cannot prove that a transaction never landed: behind a load balancer, the finalized height and the status lookup can come from different nodes, and a node can lack history. So an expired blockhash with no status found is reported as `unknown`, with that in `detail`.
 
 ## Retrying safely

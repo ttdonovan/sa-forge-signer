@@ -357,13 +357,11 @@ fn pipeline(
             }
             Err(failed) => return Ok((failed, false)),
         };
-    // The cap binds here, under the key lock, against the simulation of the exact transaction
-    // about to be sent: what is already spent or reserved plus this transaction's own spend.
-    let reserve = match cap_gate(&Audit::new(&cfg.state_dir).entries()?, key, &report, now()) {
-        Ok(r) => r,
-        Err(r) => return Ok((report.refused(&r), false)),
-    };
-    report.checks.push("cap");
+    let (tx, last_valid, reserve, report) =
+        match unique_within_cap(cfg, &rpc, key, payload, &signers, tx, last_valid, report)? {
+            Ok(v) => v,
+            Err(r) => return Ok((r, false)),
+        };
     // Durable before anything is sent: if this process dies mid-confirmation, the intent (with
     // this transaction's reservation) is what the limits and the operator see.
     Audit::new(&cfg.state_dir).append(Entry {
@@ -393,6 +391,51 @@ fn pipeline(
         CONFIRM_DEADLINE,
     )
     .map(|r| (r, true))
+}
+
+/// The last gates before the intent, under the key lock: the duplicate-signature guard, then the
+/// cap against the simulation of the exact transaction about to be sent (what is already spent or
+/// reserved plus its own spend). Returns that transaction, its last valid height and its reservation.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the signed transaction, its signing inputs and the report; a struct would serve only the lint"
+)]
+fn unique_within_cap(
+    cfg: &Config,
+    rpc: &Rpc,
+    key: &KeyConfig,
+    payload: &Payload,
+    signers: &[&Keypair],
+    tx: Transaction,
+    last_valid: u64,
+    report: Report,
+) -> Result<std::result::Result<(Transaction, u64, u64, Report), Report>> {
+    let entries = Audit::new(&cfg.state_dir).entries()?;
+    let now = now();
+    let logged = |s: &str| seen(&entries, &key.name, s, now);
+    let (tx, last_valid, mut report) = match unless_duplicate(
+        rpc,
+        logged,
+        tx,
+        last_valid,
+        payload,
+        signers,
+        &key.pubkey,
+        report,
+    )? {
+        Ok((tx, last_valid, mut r)) => {
+            r.checks.push("duplicate");
+            (tx, last_valid, r)
+        }
+        Err(failed) => return Ok(Err(failed)),
+    };
+    match cap_gate(&entries, key, &report, now) {
+        Ok(reserve) => {
+            report.checks.push("cap");
+            Ok(Ok((tx, last_valid, reserve, report)))
+        }
+        Err(r) => Ok(Err(report.refused(&r))),
+    }
 }
 
 fn send_and_confirm(
@@ -649,6 +692,46 @@ fn unless_stale(
         },
         Err(failed) => Ok(Err(failed)),
     }
+}
+
+/// ed25519 signatures are deterministic: the same instructions with the same blockhash give the
+/// same signature, so a repeated payload would resend the first transaction and report its outcome
+/// as its own. A signature already in the audit log is re-signed and simulated once with a fresh
+/// blockhash; still a repeat, it is refused and nothing is sent, so a retry is safe.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the signed transaction, its signing inputs and the report; a struct would serve only the lint"
+)]
+fn unless_duplicate(
+    chain: &impl Fresh,
+    seen: impl Fn(&str) -> bool,
+    tx: Transaction,
+    last_valid: u64,
+    payload: &Payload,
+    signers: &[&Keypair],
+    payer: &solana_address::Address,
+    report: Report,
+) -> Result<std::result::Result<(Transaction, u64, Report), Report>> {
+    let repeat = |tx: &Transaction| tx.signatures.first().is_some_and(|s| seen(&s.to_string()));
+    if !repeat(&tx) {
+        return Ok(Ok((tx, last_valid, report)));
+    }
+    match after_approval(chain, payload, signers, payer, report)? {
+        Ok((fresh, _, r)) if repeat(&fresh) => Ok(Err(r.refused(&refusal(
+            "blockhash",
+            "this transaction's signature is already in the audit log (the same instructions with the same blockhash), and the RPC returned that blockhash again: nothing was sent, and a retry is safe"
+                .to_owned(),
+        )))),
+        Ok(fresh) => Ok(Ok(fresh)),
+        Err(failed) => Ok(Err(failed)),
+    }
+}
+
+/// Whether `signature` is in this key's audit entries (intents or finals) from the last 24 h.
+fn seen(entries: &[Entry], key: &str, signature: &str, now: u64) -> bool {
+    entries.iter().any(|e| {
+        e.key == key && e.ts >= now.saturating_sub(DAY) && e.signature.as_deref() == Some(signature)
+    })
 }
 
 /// Re-signs the payload's instructions with a fresh blockhash and simulates that exact
@@ -1547,6 +1630,157 @@ mod tests {
                 .is_some_and(|d| d.starts_with("after approval"))
         );
         assert_eq!(node.simulated.borrow().len(), 1);
+    }
+
+    fn first_signature(tx: &Transaction) -> String {
+        tx.signatures[0].to_string()
+    }
+
+    fn signed_with(payer: &Keypair, payload: &Payload, hash: Hash) -> Transaction {
+        build(
+            Message::new_with_blockhash(&payload.instructions, Some(&payload.fee_payer), &hash),
+            &[payer],
+            hash,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_repeated_signature_is_re_signed_once_with_a_fresh_blockhash() {
+        let payer = Keypair::new();
+        let payload = approved_payload(&payer);
+        let node = Rebuild::new(None, (1_000, Some(990)));
+        let old = signed_with(&payer, &payload, Hash::default());
+        let logged = first_signature(&old);
+        let (tx, lv, _) = unless_duplicate(
+            &node,
+            |s| s == logged,
+            old,
+            100,
+            &payload,
+            &[&payer],
+            &payer.pubkey(),
+            blank(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(tx.message.recent_blockhash, node.hash);
+        assert_ne!(first_signature(&tx), logged);
+        assert_eq!((lv, node.simulated.borrow().len()), (777, 1));
+    }
+
+    #[test]
+    fn a_signature_still_repeated_after_a_fresh_blockhash_is_refused() {
+        let payer = Keypair::new();
+        let payload = approved_payload(&payer);
+        let node = Rebuild::new(None, (1_000, Some(990)));
+        // The node can only hand out the blockhash the logged transaction used.
+        let old = signed_with(&payer, &payload, node.hash.clone());
+        let logged = first_signature(&old);
+        let r = unless_duplicate(
+            &node,
+            |s| s == logged,
+            old,
+            100,
+            &payload,
+            &[&payer],
+            &payer.pubkey(),
+            blank(),
+        )
+        .unwrap()
+        .unwrap_err();
+        assert_eq!(
+            (r.outcome, r.failed_check),
+            (Outcome::Refused, Some("blockhash"))
+        );
+        assert!(r.detail.is_some_and(|d| d.contains("nothing was sent")));
+    }
+
+    // A confirm key's approval rebuild already changed the blockhash: nothing more is done.
+    #[test]
+    fn a_new_signature_passes_the_duplicate_guard_untouched() {
+        let payer = Keypair::new();
+        let payload = approved_payload(&payer);
+        let node = Rebuild::new(None, (1_000, Some(990)));
+        let logged = first_signature(&signed_with(&payer, &payload, Hash::default()));
+        let approved = signed_with(&payer, &payload, node.hash.clone());
+        let sig = first_signature(&approved);
+        let (tx, lv, _) = unless_duplicate(
+            &node,
+            |s| s == logged,
+            approved,
+            100,
+            &payload,
+            &[&payer],
+            &payer.pubkey(),
+            blank(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!((first_signature(&tx), lv), (sig, 100));
+        assert!(node.simulated.borrow().is_empty());
+    }
+
+    #[test]
+    fn seen_looks_at_this_keys_intents_and_finals_from_the_last_day() {
+        let other = Entry {
+            key: "other".into(),
+            ..intent(100, "b", None)
+        };
+        let log = [
+            intent(100, "a", None),
+            sign_final(101, "c", "unknown", None),
+            other,
+        ];
+        assert!(seen(&log, "k", "a", 200));
+        assert!(seen(&log, "k", "c", 200));
+        assert!(!seen(&log, "k", "b", 200), "another key's entry");
+        assert!(!seen(&log, "k", "a", 101 + DAY), "older than 24 h");
+        assert!(!seen(&log, "k", "z", 200));
+    }
+
+    fn sign(home: &crate::testrpc::Home) -> Report {
+        let mode = Mode::Sign { intent: None };
+        execute(&home.cfg, None, &home.payload(1), &mode, None)
+            .unwrap()
+            .0
+    }
+
+    #[test]
+    fn the_same_payload_with_the_same_blockhash_is_refused_not_confirmed_twice() {
+        let home = crate::testrpc::Home::new("dup-same", "");
+        let first = sign(&home);
+        assert_eq!(first.outcome, Outcome::Confirmed);
+        assert!(first.checks.contains(&"duplicate"));
+        let second = sign(&home);
+        assert_eq!(
+            (second.outcome, second.failed_check),
+            (Outcome::Refused, Some("blockhash"))
+        );
+        assert_eq!(home.node.sends(), 1, "nothing sent the second time");
+        let log = Audit::new(&home.cfg.state_dir).entries().unwrap();
+        let last = log.last().unwrap();
+        assert_eq!(
+            (last.command.as_str(), last.outcome.as_str()),
+            ("sign", "refused")
+        );
+        assert_eq!(log.iter().filter(|e| e.command == SIGN_INTENT).count(), 1);
+    }
+
+    #[test]
+    fn the_same_payload_gets_a_fresh_blockhash_when_the_rpc_has_one() {
+        let home = crate::testrpc::Home::new("dup-fresh", "");
+        let (a, b) = (Hash::new_from_array([3; 32]), Hash::new_from_array([4; 32]));
+        *home.node.blockhashes.lock().unwrap() = [a.clone(), a, b].into();
+        let first = sign(&home);
+        let second = sign(&home);
+        assert_eq!(
+            (first.outcome, second.outcome),
+            (Outcome::Confirmed, Outcome::Confirmed)
+        );
+        assert_ne!(first.signature, second.signature);
+        assert!(second.checks.contains(&"duplicate"));
+        assert_eq!(home.node.sends(), 2);
     }
 
     #[test]

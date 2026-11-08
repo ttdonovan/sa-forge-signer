@@ -1,10 +1,10 @@
 ---
-description: "Proposed hardening, none of it built yet: one policy function for check and sign, a duplicate-signature guard, a halt, an instruction table with profile and key-index checks, compute-budget and transfer limits, policy digests, redeploy holds, RPC budgets and a systemd unit. The threat each addresses, what changes, tests, priority and build order"
+description: "Proposed hardening, each marked once built: one policy function for check and sign, a duplicate-signature guard, a halt, an instruction table with profile and key-index checks, compute-budget and transfer limits, policy digests, redeploy holds, RPC budgets and a systemd unit. The threat each addresses, what changes, tests, priority and build order"
 ---
 
 # Hardening proposals
 
-Proposals for the signer, none of them built. Each names the threat it addresses (in the terms of [Security](../security.md)), what changes in `src/`, the config keys, refusals and audit fields it adds, how it is tested, its priority, and how it interacts with the others. Priorities: **blocker** (fix before relying on the signer), **high** (a real gap at low cost), **low** (worth doing when nearby work touches it), **optional** (only if a need appears). There are no blockers. Each proposal has a line in the [Plan](plan.md)'s backlog; this chapter holds the reasoning.
+Proposals for the signer. A proposal that has shipped says **Status: built** and how the build differs from the proposal, if at all; the rest are not built. Each names the threat it addresses (in the terms of [Security](../security.md)), what changes in `src/`, the config keys, refusals and audit fields it adds, how it is tested, its priority, and how it interacts with the others. Priorities: **blocker** (fix before relying on the signer), **high** (a real gap at low cost), **low** (worth doing when nearby work touches it), **optional** (only if a need appears). There are no blockers. Each proposal has a line in the [Plan](plan.md)'s backlog; this chapter holds the reasoning.
 
 Three facts frame them:
 
@@ -62,6 +62,8 @@ flowchart TD
 ## 2. Duplicate-signature guard
 
 **Threat:** ed25519 signatures are deterministic, so the same instructions with the same blockhash give the same signature. If an agent sends the same payload twice (two identical cargo moves, say) and the RPC returns the same latest blockhash both times, the second send is the first transaction again: the cluster drops it as a duplicate, its status lookup finds the first one, and the signer reports `confirmed` for an action that happened once. Nothing in `engine.rs` checks for this today.
+
+**Status: built.** The guard runs just before the cap gate rather than after it, so the cap is checked once, on the transaction actually sent; the outcome is the same. A repeat is detected by signature, which also covers the case where the RPC returns the same blockhash again.
 
 **Change:** after the cap gate and before the intent is recorded, under the key lock, look up the transaction's signature among this key's audit entries from the last 24 h (intents and final entries). If it is there, fetch a fresh blockhash and re-simulate once, as the `BlockhashNotFound` path already does, and re-run the cap gate on the new figures. If the RPC still returns the same blockhash, refuse with `failed_check` `blockhash` and a detail saying nothing was sent and a retry is safe. Add `duplicate` to `checks` when the guard passes.
 
