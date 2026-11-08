@@ -3,11 +3,12 @@
 //! RPC facts are read one at a time, in check order, so a refusal decided by earlier checks is
 //! made before the RPC is called for the next.
 
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use anyhow::Result;
 
-use crate::audit::{Audit, Entry};
+use crate::audit::Entry;
 use crate::checks;
 use crate::config::KeyConfig;
 use crate::engine::SIGN_INTENT;
@@ -19,9 +20,9 @@ use crate::rpc::Rpc;
 pub const MINUTE: u64 = 60;
 pub const DAY: u64 = 86_400;
 
-/// The facts read without the RPC: the halt, the approved policy, and the key's usage from the
-/// audit log at `now`.
-pub fn local(state_dir: &Path, key: &KeyConfig, now: u64) -> Result<Facts> {
+/// The facts read without the RPC: the halt, the approved policy, and the key's usage at `now` from
+/// `entries`, its recent audit entries.
+pub fn local(state_dir: &Path, key: &KeyConfig, entries: &[Entry], now: u64) -> Result<Facts> {
     let approved = if key.require_policy_approval {
         policy_approval::approved(state_dir, &key.name)?.map(|a| a.policy)
     } else {
@@ -30,7 +31,7 @@ pub fn local(state_dir: &Path, key: &KeyConfig, now: u64) -> Result<Facts> {
     Ok(Facts {
         halt: halt::active(state_dir, &key.name)?,
         approved_policy: approved,
-        usage: usage(&Audit::new(state_dir).recent(now)?, key, now),
+        usage: usage(entries, key, now),
         ..Facts::default()
     })
 }
@@ -69,7 +70,15 @@ pub fn read_next(
 pub fn usage(entries: &[Entry], key: &KeyConfig, now: u64) -> Usage {
     let mine: Vec<&Entry> = entries.iter().filter(|e| e.key == key.name).collect();
     let finals = || mine.iter().filter(|e| e.command == "sign");
-    let resolved = |sig: &str| finals().any(|e| e.signature.as_deref() == Some(sig));
+    // Sets and maps, not scans: a scan per entry made this quadratic in the window.
+    let finished: HashSet<&str> = finals().filter_map(|e| e.signature.as_deref()).collect();
+    let resolved = |sig: &str| finished.contains(sig);
+    let mut intents: HashMap<&str, Option<i64>> = HashMap::new();
+    for e in mine.iter().filter(|e| e.command == SIGN_INTENT) {
+        if let Some(sig) = e.signature.as_deref() {
+            intents.entry(sig).or_insert(e.balance_change);
+        }
+    }
     let orphan_intents = || {
         mine.iter().filter(|e| {
             e.command == SIGN_INTENT && e.signature.as_deref().is_none_or(|s| !resolved(s))
@@ -81,11 +90,8 @@ pub fn usage(entries: &[Entry], key: &KeyConfig, now: u64) -> Usage {
         .count();
     let cap = key.daily_lamport_cap;
     let reservation = |sig: Option<&str>| -> u64 {
-        let intent = mine
-            .iter()
-            .find(|e| e.command == SIGN_INTENT && sig.is_some() && e.signature.as_deref() == sig);
-        match intent.map(|e| e.balance_change) {
-            Some(Some(d)) => spend(d),
+        match sig.and_then(|s| intents.get(s)) {
+            Some(Some(d)) => spend(*d),
             _ => cap,
         }
     };

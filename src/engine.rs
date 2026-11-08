@@ -258,11 +258,17 @@ struct Gate<'a> {
     /// Compiled without a blockhash: no check depends on it.
     message: Message,
     facts: Facts,
+    /// This key's recent audit entries, read once. Under the key lock (in `sign`) no other sign
+    /// can add to them, so the checks before sending reuse them.
+    entries: Vec<Entry>,
     table: Option<&'a InstructionTable>,
 }
 
 impl<'a> Gate<'a> {
     fn new(cfg: &'a Config, key: &'a KeyConfig, payload: &Payload) -> Result<Self> {
+        let now = now();
+        let mut entries = Audit::new(&cfg.state_dir).recent(now)?;
+        entries.retain(|e| e.key == key.name);
         Ok(Self {
             key,
             cluster: cfg.cluster,
@@ -271,7 +277,8 @@ impl<'a> Gate<'a> {
             fee_payer: payload.fee_payer,
             partial: payload.partial_pubkeys(),
             message: Message::new(&payload.instructions, Some(&payload.fee_payer)),
-            facts: facts::local(&cfg.state_dir, key, now())?,
+            facts: facts::local(&cfg.state_dir, key, &entries, now)?,
+            entries,
             table: cfg.instruction_table.as_ref(),
         })
     }
@@ -408,12 +415,11 @@ fn pipeline(
             }
             Err(failed) => return Ok((failed, false)),
         };
-    let (tx, last_valid, reserve, report) = match unique_within_cap(
-        cfg, &rpc, &mut gate, payload, &signers, tx, last_valid, report,
-    )? {
-        Ok(v) => v,
-        Err(r) => return Ok((r, false)),
-    };
+    let (tx, last_valid, reserve, report) =
+        match unique_within_cap(&rpc, &mut gate, payload, &signers, tx, last_valid, report)? {
+            Ok(v) => v,
+            Err(r) => return Ok((r, false)),
+        };
     // Durable before anything is sent: if this process dies mid-confirmation, the intent (with
     // this transaction's reservation) is what the limits and the operator see.
     Audit::new(&cfg.state_dir).append(intent_entry(key, payload, mode, &tx, reserve))?;
@@ -460,12 +466,7 @@ fn intent_entry(
 /// The last gates before the intent, under the key lock: the duplicate-signature guard, then the
 /// cap against the simulation of the exact transaction about to be sent (what is already spent or
 /// reserved plus its own spend). Returns that transaction, its last valid height and its reservation.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the signed transaction, its signing inputs and the report; a struct would serve only the lint"
-)]
 fn unique_within_cap(
-    cfg: &Config,
     rpc: &Rpc,
     gate: &mut Gate<'_>,
     payload: &Payload,
@@ -476,7 +477,7 @@ fn unique_within_cap(
 ) -> Result<std::result::Result<(Transaction, u64, u64, Report), Report>> {
     let key = gate.key;
     let now = now();
-    let entries = Audit::new(&cfg.state_dir).recent(now)?;
+    let entries = std::mem::take(&mut gate.entries);
     let logged = |s: &str| seen(&entries, &key.name, s, now);
     let (tx, last_valid, mut report) = match unless_duplicate(
         rpc,
