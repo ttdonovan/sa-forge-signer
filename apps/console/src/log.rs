@@ -28,8 +28,17 @@ pub struct Entry {
     pub signature: Option<String>,
     pub slot: Option<u64>,
     pub balance_change: Option<i64>,
+    /// Left out when empty, as the signer writes it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub findings: Vec<Finding>,
     pub prev: String,
     pub hash: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Finding {
+    pub check: String,
+    pub detail: String,
 }
 
 impl Entry {
@@ -288,6 +297,15 @@ mod tests {
     fn verifies_a_log_the_signer_wrote() {
         let s = Snapshot::parse(include_str!("../tests/fixtures/signer-audit.jsonl"));
         assert_eq!((s.entries.len(), s.chain), (2, Chain::Ok));
+    }
+
+    /// Also written by the signer: an entry with instruction-table findings.
+    #[test]
+    fn verifies_an_entry_with_findings() {
+        let s = Snapshot::parse(include_str!(
+            "../tests/fixtures/signer-audit-findings.jsonl"
+        ));
+        assert_eq!((s.entries.len(), s.chain), (1, Chain::Ok));
     }
 
     #[test]

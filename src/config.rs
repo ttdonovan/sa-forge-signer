@@ -12,6 +12,7 @@ use solana_address::Address;
 
 use crate::checks::Limits;
 use crate::cluster::{self, Cluster};
+use crate::instruction_table::{InstructionTable, Mode as TableMode};
 use crate::keystore::KeyStore;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, clap::ValueEnum)]
@@ -71,6 +72,15 @@ struct RawConfig {
     #[serde(default)]
     keys: BTreeMap<String, RawKey>,
     serve: Option<RawServe>,
+    instruction_table: Option<RawInstructionTable>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawInstructionTable {
+    path: PathBuf,
+    sha256: String,
+    mode: TableMode,
 }
 
 #[derive(Debug, Deserialize)]
@@ -153,6 +163,8 @@ pub struct Config {
     pub state_dir: PathBuf,
     pub keys: Vec<KeyConfig>,
     pub serve: Option<ServeConfig>,
+    /// Hardening proposal 4's table, hash-checked at load.
+    pub instruction_table: Option<InstructionTable>,
 }
 
 pub struct ServeConfig {
@@ -300,8 +312,15 @@ impl Config {
         if !(explorer_url.starts_with("https://") || explorer_url.starts_with("http://")) {
             bail!("explorer_url {explorer_url:?}: must start with https:// or http://");
         }
+        let instruction_table = raw
+            .instruction_table
+            .map(|t| {
+                InstructionTable::load(&resolve(Some(t.path), ""), &t.sha256, t.mode, cluster.name)
+            })
+            .transpose()?;
         Ok(Self {
             serve,
+            instruction_table,
             cluster,
             rpc_url: raw
                 .rpc_url
@@ -335,6 +354,19 @@ impl Config {
             self.explorer_url,
             self.key_dir.display(),
             self.state_dir.display()
+        );
+        let _ = writeln!(
+            s,
+            "instruction_table: {}",
+            self.instruction_table.as_ref().map_or_else(
+                || "-".to_owned(),
+                |t| format!(
+                    "{} ({}, {} instructions)",
+                    t.path.display(),
+                    t.mode.as_str(),
+                    t.len()
+                )
+            )
         );
         if self.keys.is_empty() {
             s.push_str(
@@ -547,6 +579,22 @@ mod tests {
             "a token must not grant the wallet key"
         );
         assert!(parse(&with("s")).is_ok());
+    }
+
+    #[test]
+    fn an_instruction_table_must_load() {
+        let with = |mode: &str| {
+            format!(
+                "instruction_table = {{ path = \"missing.json\", sha256 = \"00\", mode = \"{mode}\" }}\n"
+            )
+        };
+        let missing = parse(&with("report")).err().unwrap();
+        assert!(
+            format!("{missing:#}").contains("missing.json"),
+            "{missing:#}"
+        );
+        assert!(parse(&with("enforce")).is_err(), "enforce is not built yet");
+        assert!(parse("").unwrap().instruction_table.is_none());
     }
 
     #[test]

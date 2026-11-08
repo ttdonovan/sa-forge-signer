@@ -35,6 +35,7 @@ One binary crate; each module's `//!` comment is the authority if this page drif
 | `transfer.rs` | Funding payloads: a plain System Program transfer in the same shape forge-mcp returns |
 | `checks.rs` | Structural checks on the compiled message; none decode game instructions |
 | `policy.rs` | Every check `check` and `sign` make, as one pure `evaluate` over the request, the key's policy and `Facts`, at a stage (`Check`, `BeforeSimulation`, `AfterSimulation`); returns every result in order. New checks go here |
+| `instruction_table.rs` | The hash-checked instruction table from `apps/idl-table`, and its findings (`instructions`, `accounts`, `profile`) on a compiled message, without decoding anything |
 | `facts.rs` | The reads behind `evaluate`: the halt, the key's usage from the audit log, and the RPC facts, read one at a time in check order |
 | `engine.rs` | The check and sign pipeline: gather facts and evaluate, simulate, approval, the blockhash and duplicate guards, sign, send, confirm |
 | `rpc.rs` | The minimal Solana JSON-RPC client: only the calls the signer needs |

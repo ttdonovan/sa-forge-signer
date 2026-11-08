@@ -15,12 +15,13 @@ use solana_signer::Signer;
 use solana_transaction::Transaction;
 use zeroize::Zeroizing;
 
-use crate::audit::{Audit, Entry, KeyLock};
+use crate::audit::{Audit, Entry, Finding, KeyLock};
 use crate::checks::{Refusal, refuse as refusal};
 use crate::cluster::Cluster;
 use crate::config::{Approval, Config, KeyConfig};
 use crate::facts::{self, DAY};
 use crate::halt;
+use crate::instruction_table::InstructionTable;
 use crate::keystore::KeyStore;
 use crate::payload::Payload;
 use crate::policy::{self, Facts, KeyPolicy, Request, Stage, Verdict};
@@ -71,6 +72,9 @@ pub struct Report {
     pub checks: Vec<&'static str>,
     /// `check` only: what `sign` would refuse now that `check` does not.
     pub sign_preview: Option<SignPreview>,
+    /// The instruction table's findings, in report mode: never a refusal.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub findings: Vec<Refusal>,
     pub compute_units: Option<u64>,
     pub fee: Option<u64>,
     pub balance_change: Option<i64>,
@@ -103,6 +107,7 @@ impl Report {
             error: None,
             checks: Vec::new(),
             sign_preview: None,
+            findings: Vec::new(),
             compute_units: None,
             fee: None,
             balance_change: None,
@@ -200,6 +205,14 @@ pub fn execute(
             signature: report.signature.clone(),
             slot: report.slot,
             balance_change: report.balance_change,
+            findings: report
+                .findings
+                .iter()
+                .map(|f| Finding {
+                    check: f.check.to_owned(),
+                    detail: f.detail.clone(),
+                })
+                .collect(),
             ..Entry::default()
         };
         Audit::new(&cfg.state_dir).append(entry)?;
@@ -244,10 +257,11 @@ struct Gate<'a> {
     /// Compiled without a blockhash: no check depends on it.
     message: Message,
     facts: Facts,
+    table: Option<&'a InstructionTable>,
 }
 
 impl<'a> Gate<'a> {
-    fn new(cfg: &Config, key: &'a KeyConfig, payload: &Payload) -> Result<Self> {
+    fn new(cfg: &'a Config, key: &'a KeyConfig, payload: &Payload) -> Result<Self> {
         Ok(Self {
             key,
             cluster: cfg.cluster,
@@ -257,6 +271,7 @@ impl<'a> Gate<'a> {
             partial: payload.partial_pubkeys(),
             message: Message::new(&payload.instructions, Some(&payload.fee_payer)),
             facts: facts::local(&cfg.state_dir, key, now())?,
+            table: cfg.instruction_table.as_ref(),
         })
     }
 
@@ -271,6 +286,7 @@ impl<'a> Gate<'a> {
             cluster: self.cluster,
             allowed_programs: &self.allowed,
             game_programs: &self.games,
+            table: self.table,
         };
         policy::evaluate(&request, &self.facts, &policy, stage)
     }
@@ -293,6 +309,7 @@ impl<'a> Gate<'a> {
                 cluster: self.cluster,
                 allowed_programs: &self.allowed,
                 game_programs: &self.games,
+                table: self.table,
             };
             if !facts::read_next(&mut self.facts, rpc, &request, &policy)? {
                 return Ok(verdict);
@@ -331,6 +348,7 @@ fn pipeline(
         },
     )?;
     report.checks = verdict.passed();
+    report.findings.clone_from(&verdict.findings);
     if let Some(r) = verdict.refusal() {
         return Ok((with_preview(report.refused(r), &verdict, key, mode), false));
     }
@@ -1240,6 +1258,7 @@ mod tests {
             error: None,
             checks: vec![],
             sign_preview: None,
+            findings: Vec::new(),
             compute_units: None,
             fee: None,
             balance_change: Some(-1),
@@ -1937,5 +1956,113 @@ mod tests {
         assert_eq!(r.outcome.exit_code(), ExitCode::from(14));
         assert!(chain.sends.get() > 1, "rebroadcasts while waiting");
         assert!(r.detail.is_some_and(|d| d.contains("down")));
+    }
+
+    const SAGE: &str = "C4SAgeKLgb3pTLWhVr6NRwWyYFuTR7ZeSXFrzoLwfMzF";
+    const ACT: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
+
+    /// A home whose config names a table listing one SAGE instruction, `act`: the signer at 0,
+    /// checked against the profile at 1. `extra` goes in the key's block.
+    fn tabled(tag: &str, extra: &str) -> crate::testrpc::Home {
+        use sha2::Digest;
+        let mut home = crate::testrpc::Home::new(tag, extra);
+        let table = format!(
+            r#"{{"format": 1, "cluster": "zink-testnet", "programs": [{{"address": "{SAGE}"}}],
+            "instructions": [{{"program": "{SAGE}", "discriminator": "0102030405060708", "name": "act",
+              "accounts": {{"min": 2, "max": 2}}, "profiles": [{{"signer": 0, "profile": 1}}]}}]}}"#
+        );
+        std::fs::write(home.dir.join("table.json"), &table).unwrap();
+        let sum = crate::payload::hex(&sha2::Sha256::digest(table.as_bytes()));
+        let text = std::fs::read_to_string(&home.path).unwrap();
+        std::fs::write(
+            &home.path,
+            format!(
+                "instruction_table = {{ path = \"table.json\", sha256 = \"{sum}\", mode = \"report\" }}\n{text}"
+            ),
+        )
+        .unwrap();
+        home.cfg = Config::load(&home.path, true).unwrap();
+        home
+    }
+
+    fn act(home: &crate::testrpc::Home, disc: [u8; 8], profile: &Address) -> String {
+        let key = home.pubkey.to_string();
+        serde_json::json!({
+            "version": 1, "summary": "act", "warnings": [],
+            "transaction": {
+                "instructions": [{
+                    "program_id": SAGE,
+                    "accounts": [
+                        {"pubkey": key, "is_signer": true, "is_writable": false},
+                        {"pubkey": profile.to_string(), "is_signer": false, "is_writable": true},
+                    ],
+                    "data": disc.to_vec(),
+                }],
+                "signers": [key],
+                "fee_payer": key,
+            },
+            "partial_signers": [],
+        })
+        .to_string()
+    }
+
+    fn found(r: &Report) -> Vec<&'static str> {
+        r.findings.iter().map(|f| f.check).collect()
+    }
+
+    #[test]
+    fn table_findings_are_reported_and_logged_but_never_refuse() {
+        let own = Address::new_from_array([5; 32]);
+        let home = tabled("table-report", &format!("profile = \"{own}\"\n"));
+        let run =
+            |payload: &str, mode: &Mode| execute(&home.cfg, None, payload, mode, None).unwrap().0;
+        let sign = Mode::Sign { intent: None };
+
+        let unknown = run(&act(&home, [9; 8], &own), &Mode::Check);
+        assert_eq!(
+            (unknown.outcome, found(&unknown)),
+            (Outcome::Ok, vec!["instructions"])
+        );
+
+        let other = Address::new_from_array([6; 32]);
+        let elsewhere = run(&act(&home, ACT, &other), &sign);
+        assert_eq!(
+            (elsewhere.outcome, found(&elsewhere)),
+            (Outcome::Confirmed, vec!["profile"]),
+            "report mode signs anyway"
+        );
+        let logged = Audit::new(&home.cfg.state_dir).entries().unwrap();
+        let last = logged.last().unwrap();
+        assert_eq!(last.findings.len(), 1);
+        assert_eq!(last.findings[0].check, "profile");
+
+        let clean = run(&act(&home, ACT, &own), &sign);
+        assert_eq!((clean.outcome, found(&clean)), (Outcome::Confirmed, vec![]));
+        let json = serde_json::to_string(&clean).unwrap();
+        assert!(
+            !json.contains("findings"),
+            "an empty list is left out: {json}"
+        );
+        let entries = Audit::new(&home.cfg.state_dir).entries().unwrap();
+        assert!(entries.last().unwrap().findings.is_empty());
+        assert!(
+            Audit::new(&home.cfg.state_dir).verify().unwrap().is_ok(),
+            "the chain holds"
+        );
+    }
+
+    #[test]
+    fn without_a_table_there_are_no_findings() {
+        let home = crate::testrpc::Home::new("table-none", "");
+        let r = execute(
+            &home.cfg,
+            None,
+            &act(&home, [9; 8], &home.pubkey),
+            &Mode::Check,
+            None,
+        )
+        .unwrap()
+        .0;
+        assert!(r.findings.is_empty());
     }
 }

@@ -6,7 +6,7 @@ description: "config init and config show, and the annotated example config: clu
 
 The config lives at `~/.config/sa-forge-signer/config.toml` unless `--config` or `SA_FORGE_SIGNER_CONFIG` says otherwise. `sa-forge-signer config init` writes the example below there (mode 0600, in a 0700 directory it creates if needed) and refuses to overwrite an existing file. It has no keys yet: add the block `key new` prints for each key, and `[serve]` if you run `serve`.
 
-`sa-forge-signer config show` prints the config as the signer resolves it: the paths, the RPC, and each key with its effective class, approval, limits and whether its key file exists, defaults filled in, then `[serve]` with each token's name and keys. It reads no key material, prints no token hashes, and calls no RPC.
+`sa-forge-signer config show` prints the config as the signer resolves it: the paths, the RPC, and the instruction table if one is set, each key with its effective class, approval, limits and whether its key file exists, defaults filled in, then `[serve]` with each token's name and keys. It reads no key material, prints no token hashes, and calls no RPC.
 
 ## Settings
 
@@ -19,9 +19,10 @@ Only `class` and `pubkey` on each key, and a token for `serve`, have to be set; 
 | `explorer_url` | the cluster's explorer (`https://explorer.z.ink`) | you prefer another block explorer. Used only for links: the `explorer` field of a `sign` report and the [console](apps/console.md)'s links; the signer never calls it |
 | `key_dir` | `keys`, beside the config | keys live elsewhere (in Docker, `/run/keys`) |
 | `state_dir` | `state`, beside the config | the audit log lives elsewhere (in Docker, `/var/lib/sa-forge-signer`) |
+| `instruction_table` | none | you want the [instruction table](apps/idl-table.md)'s findings: `{ path = "...", sha256 = "...", mode = "report" }`, the path relative to the config. The signer refuses to start if the file's sha256 differs or it is for another cluster. `report` adds `findings` to each report and audit entry and never refuses; an enforcing mode comes later |
 | `[keys.<name>] class` | required | `"session"` for a SAGE-scoped profile key, `"wallet"` for the profile authority |
 | `pubkey` | required | the pubkey `key new` or `key import` printed |
-| `profile` | none | you want `key show` and the MCP `key_show` tool to report the key's profile; it changes no check |
+| `profile` | none | you want `key show` and the MCP `key_show` tool to report the key's profile, or you configure an `instruction_table`: its `profile` finding holds the key to this profile |
 | `approval` | `"auto"` for a session key, `"confirm"` for a wallet key | a key should never sign (`"deny"`), or a testnet wallet should sign unattended (`"auto"`, with `allow_unattended`) |
 | `allow_unattended` | `false` | a throwaway testnet wallet key must be `"auto"` or on a serve token |
 | `rate_limit_per_minute` | `30` | the agent signs faster than that |

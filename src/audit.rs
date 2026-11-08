@@ -31,8 +31,18 @@ pub struct Entry {
     pub signature: Option<String>,
     pub slot: Option<u64>,
     pub balance_change: Option<i64>,
+    /// The instruction table's findings. Left out when empty, so entries written before it keep
+    /// their hashes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub findings: Vec<Finding>,
     pub prev: String,
     pub hash: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Finding {
+    pub check: String,
+    pub detail: String,
 }
 
 impl Entry {

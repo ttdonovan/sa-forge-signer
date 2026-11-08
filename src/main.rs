@@ -7,6 +7,7 @@ mod config;
 mod engine;
 mod facts;
 mod halt;
+mod instruction_table;
 mod keystore;
 mod payload;
 mod policy;

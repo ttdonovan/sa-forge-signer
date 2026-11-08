@@ -105,6 +105,8 @@ flowchart TD
 
 **Threat:** the `programs` check looks only at program ids, so any instruction of SAGE, Player Profile or Profile Faction passes, including ones no builder emits and ones whose accounts are malformed. Inside those programs the chain checks that the signer is the key at the given index of the given profile, so a wrong index already fails in simulation; but a key that is a key of several profiles (a wallet key that is the authority on more than one, for example) can act for any of them, and nothing holds it to the one the operator meant.
 
+**Status: report mode built;** enforce mode is not (`mode = "enforce"` does not load yet). How the build differs from the proposal below: the table's path resolves against the config's directory, like `key_dir`; only top-level instructions are compared, since the signer sees no inner calls; an instruction with the wrong account count gets that finding and no `profile` finding; and the audit entry's `findings` field is left out when empty, so entries written before it keep their hashes (the [console](../apps/console.md) mirrors the field).
+
 **Decoder-free:** every check here compares the compiled message with the table and the config. The signer reads no profile account and decodes no account data, so this proposal adds no RPC call and no account layout to follow across redeploys. What only a decoded profile could check is under "Not in this proposal" below.
 
 **Change:**

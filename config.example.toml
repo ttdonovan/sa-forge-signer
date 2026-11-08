@@ -6,6 +6,8 @@ cluster = "zink-testnet"
 # explorer_url = "https://explorer.z.ink"   # default for the cluster; for links only
 # key_dir = "keys"                 # 0700; one 0600 file per key
 # state_dir = "state"              # audit log
+# Report what the instruction table (just apps idl-table) says about each payload; never refuses.
+# instruction_table = { path = "zink-testnet.json", sha256 = "SHA256_OF_THE_FILE", mode = "report" }
 
 # A SAGE-scoped session key. Signs without asking. The config holds no key index: the agent passes
 # the key's profile index (the next free one when granted, not always 1) as forge-mcp's keyIndex.

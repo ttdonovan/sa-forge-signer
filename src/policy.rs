@@ -9,6 +9,7 @@ use crate::checks::{self, Refusal, refuse};
 use crate::cluster::Cluster;
 use crate::config::{Approval, KeyConfig};
 use crate::halt::Halt;
+use crate::instruction_table::InstructionTable;
 
 /// What is to be signed. `message` may carry any blockhash: no check depends on it.
 pub struct Request<'a> {
@@ -23,6 +24,7 @@ pub struct KeyPolicy<'a> {
     pub cluster: &'a Cluster,
     pub allowed_programs: &'a [Address],
     pub game_programs: &'a [Address],
+    pub table: Option<&'a InstructionTable>,
 }
 
 impl KeyPolicy<'_> {
@@ -96,6 +98,8 @@ struct Item {
 pub struct Verdict {
     stage: Stage,
     items: Vec<Item>,
+    /// The instruction table's findings, in report mode: they never refuse.
+    pub findings: Vec<Refusal>,
 }
 
 impl Verdict {
@@ -192,7 +196,14 @@ pub fn evaluate(
     if let Stage::AfterSimulation { reserve } = stage {
         add(Some("cap"), true, cap(facts.usage, key, reserve).into());
     }
-    Verdict { stage, items }
+    let findings = policy.table.map_or_else(Vec::new, |t| {
+        t.findings(request.message, &key.pubkey, key.profile.as_ref())
+    });
+    Verdict {
+        stage,
+        items,
+        findings,
+    }
 }
 
 fn fee_payer(request: &Request<'_>, key: &KeyConfig) -> Result<(), Refusal> {
@@ -423,6 +434,7 @@ mod tests {
             cluster: &ZINK_TESTNET,
             allowed_programs: &allowed,
             game_programs: &[addr(9)],
+            table: None,
         };
         evaluate(&request, &case.facts, &policy, stage)
     }
