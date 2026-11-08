@@ -36,6 +36,8 @@ impl Mode {
 pub struct InstructionTable {
     pub path: PathBuf,
     pub mode: Mode,
+    /// The file's sha256, lowercase hex.
+    pub sha256: String,
     programs: Vec<Address>,
     rows: HashMap<(Address, [u8; 8]), Row>,
 }
@@ -95,7 +97,9 @@ impl InstructionTable {
                 path.display()
             );
         }
-        Self::parse(&bytes, path, mode, cluster)
+        let mut table = Self::parse(&bytes, path, mode, cluster)?;
+        table.sha256 = actual;
+        Ok(table)
     }
 
     fn parse(bytes: &[u8], path: &Path, mode: Mode, cluster: &str) -> Result<Self> {
@@ -145,6 +149,7 @@ impl InstructionTable {
         Ok(Self {
             path: path.to_owned(),
             mode,
+            sha256: String::new(),
             programs,
             rows,
         })

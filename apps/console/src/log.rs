@@ -31,6 +31,9 @@ pub struct Entry {
     /// Left out when empty, as the signer writes it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub findings: Vec<Finding>,
+    /// The key's policy digest; left out when absent, as the signer writes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<String>,
     pub prev: String,
     pub hash: String,
 }
@@ -306,6 +309,13 @@ mod tests {
             "../tests/fixtures/signer-audit-findings.jsonl"
         ));
         assert_eq!((s.entries.len(), s.chain), (1, Chain::Ok));
+    }
+
+    /// Also written by the signer: a `key approve` entry and a sign, each with a policy digest.
+    #[test]
+    fn verifies_entries_with_a_policy() {
+        let s = Snapshot::parse(include_str!("../tests/fixtures/signer-audit-policy.jsonl"));
+        assert_eq!((s.entries.len(), s.chain), (2, Chain::Ok));
     }
 
     #[test]

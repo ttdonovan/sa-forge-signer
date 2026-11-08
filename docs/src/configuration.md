@@ -6,7 +6,7 @@ description: "config init and config show, and the annotated example config: clu
 
 The config lives at `~/.config/sa-forge-signer/config.toml` unless `--config` or `SA_FORGE_SIGNER_CONFIG` says otherwise. `sa-forge-signer config init` writes the example below there (mode 0600, in a 0700 directory it creates if needed) and refuses to overwrite an existing file. It has no keys yet: add the block `key new` prints for each key, and `[serve]` if you run `serve`.
 
-`sa-forge-signer config show` prints the config as the signer resolves it: the paths, the RPC, and the instruction table if one is set, each key with its effective class, approval, limits and whether its key file exists, defaults filled in, then `[serve]` with each token's name and keys. It reads no key material, prints no token hashes, and calls no RPC.
+`sa-forge-signer config show` prints the config as the signer resolves it: the paths, the RPC, and the instruction table if one is set, each key with its effective class, approval, limits, policy digest and whether its key file exists, defaults filled in, then `[serve]` with each token's name and keys. It reads no key material, prints no token hashes, and calls no RPC.
 
 ## Settings
 
@@ -28,6 +28,7 @@ Only `class` and `pubkey` on each key, and a token for `serve`, have to be set; 
 | `rate_limit_per_minute` | `30` | the agent signs faster than that |
 | `daily_lamport_cap` | `50000000` (0.05 ZINK) | the key spends more in 24 h (fees and transfers it signs) |
 | `halt_after_unknown` | `3` | the key should [halt](check-and-sign.md#halting) after more or fewer consecutive `unknown` outcomes; `0` never halts it |
+| `require_policy_approval` | `false` | a change to the key's policy should stop it signing until a person runs `key approve <name>` at a terminal ([Policy digest](check-and-sign.md#policy-digest)) |
 | `max_compute_units` | `1400000` (the runtime's maximum) | the key's payloads should be held to a lower `SetComputeUnitLimit` |
 | `max_compute_unit_price` | `0` (no priority fee) | the key may pay a priority fee: the highest `SetComputeUnitPrice`, in micro-lamports per compute unit |
 | `transfer_max_lamports` | none (only the daily cap) | the key's System transfers, summed over one transaction, should stay under a smaller amount |

@@ -1,4 +1,5 @@
-//! The reads behind `policy::evaluate`: the halt record, the audit log, the clock and the RPC.
+//! The reads behind `policy::evaluate`: the halt and approval records, the audit log, the clock and
+//! the RPC.
 //! RPC facts are read one at a time, in check order, so a refusal decided by earlier checks is
 //! made before the RPC is called for the next.
 
@@ -12,15 +13,23 @@ use crate::config::KeyConfig;
 use crate::engine::SIGN_INTENT;
 use crate::halt;
 use crate::policy::{Facts, KeyPolicy, Request, Usage};
+use crate::policy_approval;
 use crate::rpc::Rpc;
 
 pub const MINUTE: u64 = 60;
 pub const DAY: u64 = 86_400;
 
-/// The facts read without the RPC: the halt, and the key's usage from the audit log at `now`.
+/// The facts read without the RPC: the halt, the approved policy, and the key's usage from the
+/// audit log at `now`.
 pub fn local(state_dir: &Path, key: &KeyConfig, now: u64) -> Result<Facts> {
+    let approved = if key.require_policy_approval {
+        policy_approval::approved(state_dir, &key.name)?.map(|a| a.policy)
+    } else {
+        None
+    };
     Ok(Facts {
         halt: halt::active(state_dir, &key.name)?,
+        approved_policy: approved,
         usage: usage(&Audit::new(state_dir).entries()?, key, now),
         ..Facts::default()
     })

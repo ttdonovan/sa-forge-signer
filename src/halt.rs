@@ -64,9 +64,9 @@ pub fn active(state_dir: &Path, key: &str) -> Result<Option<Halt>> {
     read(&path(state_dir, None))
 }
 
-/// Writes the halt (one key, or every key for `None`) and its `halt` audit entry.
-pub fn set(state_dir: &Path, key: Option<&str>, halt: &Halt) -> Result<()> {
-    let file = path(state_dir, key);
+/// Writes `bytes` to `file` (0600, in 0700 directories) whole, then renames it into place, so a
+/// reader never sees half a record.
+pub fn write_private(file: &Path, bytes: &[u8]) -> Result<()> {
     if let Some(dir) = file.parent() {
         DirBuilder::new()
             .recursive(true)
@@ -74,7 +74,6 @@ pub fn set(state_dir: &Path, key: Option<&str>, halt: &Halt) -> Result<()> {
             .create(dir)
             .with_context(|| format!("creating {}", dir.display()))?;
     }
-    // Written whole, then renamed into place, so a reader never sees half a record.
     let tmp = file.with_extension("json.tmp");
     let mut f = OpenOptions::new()
         .write(true)
@@ -83,9 +82,18 @@ pub fn set(state_dir: &Path, key: Option<&str>, halt: &Halt) -> Result<()> {
         .mode(0o600)
         .open(&tmp)
         .with_context(|| format!("opening {}", tmp.display()))?;
-    f.write_all(serde_json::to_string(halt)?.as_bytes())?;
+    f.write_all(bytes)?;
     f.sync_all()?;
-    std::fs::rename(&tmp, &file).with_context(|| format!("writing {}", file.display()))?;
+    std::fs::rename(&tmp, file).with_context(|| format!("writing {}", file.display()))?;
+    Ok(())
+}
+
+/// Writes the halt (one key, or every key for `None`) and its `halt` audit entry.
+pub fn set(state_dir: &Path, key: Option<&str>, halt: &Halt) -> Result<()> {
+    write_private(
+        &path(state_dir, key),
+        serde_json::to_string(halt)?.as_bytes(),
+    )?;
     Audit::new(state_dir).append(Entry {
         ts: halt.ts,
         key: key.unwrap_or(ALL_KEYS).to_owned(),
@@ -190,14 +198,14 @@ pub fn trip_after_unknown(state_dir: &Path, key: &str, limit: u32, now: u64) -> 
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use std::io::Cursor;
 
     /// A terminal that answers with `input` and records the prompt.
-    struct Term {
+    pub struct Term {
         input: Cursor<Vec<u8>>,
-        output: Vec<u8>,
+        pub output: Vec<u8>,
     }
 
     impl Read for Term {
@@ -215,7 +223,7 @@ mod tests {
         }
     }
 
-    fn term(answer: &str) -> Term {
+    pub fn term(answer: &str) -> Term {
         Term {
             input: Cursor::new(answer.as_bytes().to_vec()),
             output: Vec::new(),

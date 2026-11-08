@@ -213,6 +213,7 @@ pub fn execute(
                     detail: f.detail.clone(),
                 })
                 .collect(),
+            policy: Some(key.policy.clone()),
             ..Entry::default()
         };
         Audit::new(&cfg.state_dir).append(entry)?;
@@ -415,7 +416,29 @@ fn pipeline(
     };
     // Durable before anything is sent: if this process dies mid-confirmation, the intent (with
     // this transaction's reservation) is what the limits and the operator see.
-    Audit::new(&cfg.state_dir).append(Entry {
+    Audit::new(&cfg.state_dir).append(intent_entry(key, payload, mode, &tx, reserve))?;
+    let explorer = &cfg.explorer_url;
+    send_and_confirm(
+        &rpc,
+        &tx,
+        last_valid,
+        report,
+        explorer,
+        POLL,
+        CONFIRM_DEADLINE,
+    )
+    .map(|r| (r, true))
+}
+
+/// The `sign-intent` entry written before `tx` is sent, with its reservation.
+fn intent_entry(
+    key: &KeyConfig,
+    payload: &Payload,
+    mode: &Mode,
+    tx: &Transaction,
+    reserve: u64,
+) -> Entry {
+    Entry {
         ts: now(),
         key: key.name.clone(),
         command: SIGN_INTENT.to_owned(),
@@ -429,19 +452,9 @@ fn pipeline(
         outcome: "pending".to_owned(),
         signature: tx.signatures.first().map(ToString::to_string),
         balance_change: Some(0_i64.saturating_sub_unsigned(reserve)),
+        policy: Some(key.policy.clone()),
         ..Entry::default()
-    })?;
-    let explorer = &cfg.explorer_url;
-    send_and_confirm(
-        &rpc,
-        &tx,
-        last_valid,
-        report,
-        explorer,
-        POLL,
-        CONFIRM_DEADLINE,
-    )
-    .map(|r| (r, true))
+    }
 }
 
 /// The last gates before the intent, under the key lock: the duplicate-signature guard, then the
@@ -947,6 +960,8 @@ mod tests {
             daily_lamport_cap: 1_000,
             halt_after_unknown: 3,
             limits: crate::checks::Limits::DEFAULT,
+            require_policy_approval: false,
+            policy: String::new(),
         }
     }
 
@@ -2049,6 +2064,72 @@ mod tests {
             Audit::new(&home.cfg.state_dir).verify().unwrap().is_ok(),
             "the chain holds"
         );
+    }
+
+    #[test]
+    fn a_key_that_requires_approval_signs_only_under_its_approved_policy() {
+        use crate::halt::tests::term;
+        let home = crate::testrpc::Home::new("policy", "require_policy_approval = true\n");
+        let payload = act(&home, ACT, &home.pubkey);
+        let run = |cfg: &Config, mode: &Mode| execute(cfg, None, &payload, mode, None).unwrap().0;
+        let sign = Mode::Sign { intent: None };
+
+        let refused = run(&home.cfg, &sign);
+        assert_eq!(
+            (refused.outcome, refused.failed_check),
+            (Outcome::Refused, Some("policy"))
+        );
+        let checked = run(&home.cfg, &Mode::Check);
+        assert_eq!(checked.outcome, Outcome::Ok, "check still runs");
+        let preview: Vec<&str> = checked
+            .sign_preview
+            .as_ref()
+            .unwrap()
+            .refusals
+            .iter()
+            .map(|r| r.check)
+            .collect();
+        assert_eq!(preview, ["policy"]);
+
+        let key = home.cfg.key("k").unwrap();
+        crate::policy_approval::approve(&home.cfg.state_dir, key, Some(term("yes\n")), 1).unwrap();
+        assert_eq!(run(&home.cfg, &sign).outcome, Outcome::Confirmed);
+        let entries = Audit::new(&home.cfg.state_dir).entries().unwrap();
+        let signs: Vec<&Entry> = entries
+            .iter()
+            .filter(|e| e.command == "sign" || e.command == SIGN_INTENT)
+            .collect();
+        assert_eq!(
+            signs.len(),
+            3,
+            "the refused sign, the intent and the final entry"
+        );
+        assert!(
+            signs
+                .iter()
+                .all(|e| e.policy.as_deref() == Some(key.policy.as_str())),
+            "every sign entry records the policy it was made under"
+        );
+
+        let text = std::fs::read_to_string(&home.path).unwrap();
+        std::fs::write(&home.path, format!("{text}rate_limit_per_minute = 99\n")).unwrap();
+        let changed = Config::load(&home.path, true).unwrap();
+        assert_ne!(changed.key("k").unwrap().policy, key.policy);
+        assert_eq!(
+            run(&changed, &sign).failed_check,
+            Some("policy"),
+            "a changed policy needs approving again"
+        );
+        assert!(Audit::new(&home.cfg.state_dir).verify().unwrap().is_ok());
+    }
+
+    #[test]
+    fn the_policy_digest_covers_the_instruction_table() {
+        let home = tabled("policy-table", "");
+        let key = home.cfg.key("k").unwrap();
+        let digest = |t| crate::config::policy_digest(home.cfg.cluster, key, &[], t).unwrap();
+        assert_eq!(key.policy, digest(home.cfg.instruction_table.as_ref()));
+        assert_ne!(key.policy, digest(None));
     }
 
     #[test]

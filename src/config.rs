@@ -8,6 +8,7 @@ use std::str::FromStr;
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use solana_address::Address;
 
 use crate::checks::Limits;
@@ -131,6 +132,9 @@ struct RawKey {
     /// throwaway testnet key whose grants you do not mind an agent choosing.
     #[serde(default)]
     allow_unattended: bool,
+    /// Sign only while the key's policy digest is the one last approved with `key approve`.
+    #[serde(default)]
+    require_policy_approval: bool,
 }
 
 fn default_cluster() -> String {
@@ -152,6 +156,9 @@ pub struct KeyConfig {
     pub halt_after_unknown: u32,
     /// `ComputeBudget` and Transfer bounds.
     pub limits: Limits,
+    pub require_policy_approval: bool,
+    /// sha256 of the key's resolved policy; see [`policy_digest`].
+    pub policy: String,
 }
 
 pub struct Config {
@@ -244,6 +251,11 @@ impl Config {
         Self::from_raw(raw, base)
     }
 
+    #[cfg(test)]
+    pub fn load_str(text: &str) -> Result<Self> {
+        Self::from_raw(toml::from_str(text)?, Path::new("/cfg"))
+    }
+
     fn from_raw(raw: RawConfig, base: &Path) -> Result<Self> {
         let Some(cluster) = cluster::by_name(&raw.cluster) else {
             bail!(
@@ -297,6 +309,8 @@ impl Config {
                         .unwrap_or(Limits::DEFAULT.max_compute_unit_price),
                     transfer_max_lamports: k.transfer_max_lamports,
                 },
+                require_policy_approval: k.require_policy_approval,
+                policy: String::new(),
                 name,
             });
         }
@@ -318,6 +332,14 @@ impl Config {
                 InstructionTable::load(&resolve(Some(t.path), ""), &t.sha256, t.mode, cluster.name)
             })
             .transpose()?;
+        let tokens = serve.as_ref().map_or(&[][..], |s| s.tokens.as_slice());
+        let digests = keys
+            .iter()
+            .map(|k| policy_digest(cluster, k, tokens, instruction_table.as_ref()))
+            .collect::<Result<Vec<_>>>()?;
+        for (k, d) in keys.iter_mut().zip(digests) {
+            k.policy = d;
+        }
         Ok(Self {
             serve,
             instruction_table,
@@ -335,16 +357,6 @@ impl Config {
     /// The config as the signer resolves it, defaults filled in, for `config show`. Token hashes
     /// are left out. Reads no key material: a key file is only checked for existence.
     pub fn describe(&self, path: &Path) -> String {
-        let list = |v: &[Address]| {
-            if v.is_empty() {
-                "-".to_owned()
-            } else {
-                v.iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            }
-        };
         let store = KeyStore::new(&self.key_dir);
         let mut s = format!(
             "config:    {}\ncluster:   {}\nrpc_url:   {}\nexplorer:  {}\nkey_dir:   {}\nstate_dir: {}\n",
@@ -374,39 +386,7 @@ impl Config {
             );
         }
         for k in &self.keys {
-            let _ = write!(
-                s,
-                "\n[keys.{}]\n  pubkey:         {}\n  class:          {}\n  approval:       {}\n  key file:       {}\n  profile:        {}\n  rate limit:     {} per minute\n  daily cap:      {} lamports ({} ZINK)\n  halt after:     {}\n  compute units:  at most {}, price at most {} micro-lamports\n  transfer max:   {}\n  transfer_to:    {}\n  extra_programs: {}\n",
-                k.name,
-                k.pubkey,
-                k.class.as_str(),
-                k.approval.as_str(),
-                if store.has(&k.name) {
-                    "present"
-                } else {
-                    "missing"
-                },
-                k.profile.map_or_else(|| "-".to_owned(), |p| p.to_string()),
-                k.rate_limit_per_minute,
-                k.daily_lamport_cap,
-                zink(k.daily_lamport_cap),
-                if k.halt_after_unknown == 0 {
-                    "never".to_owned()
-                } else {
-                    format!("{} consecutive unknown outcomes", k.halt_after_unknown)
-                },
-                k.limits.max_compute_units,
-                k.limits.max_compute_unit_price,
-                k.limits.transfer_max_lamports.map_or_else(
-                    || "-".to_owned(),
-                    |m| format!("{m} lamports per transaction")
-                ),
-                list(&k.transfer_to),
-                list(&k.extra_programs),
-            );
-            if k.allow_unattended {
-                s.push_str("  allow_unattended: true (throwaway testnet keys only)\n");
-            }
+            s.push_str(&describe_key(k, &store));
         }
         match &self.serve {
             None => s.push_str("\nserve: not configured\n"),
@@ -485,6 +465,108 @@ impl Config {
             .filter(|p| !utility.contains(p))
             .collect())
     }
+}
+
+/// One key's block of `config show`.
+fn describe_key(k: &KeyConfig, store: &KeyStore) -> String {
+    let mut s = String::new();
+    let _ = write!(
+        s,
+        "\n[keys.{}]\n  pubkey:         {}\n  class:          {}\n  approval:       {}\n  key file:       {}\n  profile:        {}\n  rate limit:     {} per minute\n  daily cap:      {} lamports ({} ZINK)\n  halt after:     {}\n  compute units:  at most {}, price at most {} micro-lamports\n  transfer max:   {}\n  transfer_to:    {}\n  extra_programs: {}\n  policy:         {}{}\n",
+        k.name,
+        k.pubkey,
+        k.class.as_str(),
+        k.approval.as_str(),
+        if store.has(&k.name) {
+            "present"
+        } else {
+            "missing"
+        },
+        k.profile.map_or_else(|| "-".to_owned(), |p| p.to_string()),
+        k.rate_limit_per_minute,
+        k.daily_lamport_cap,
+        zink(k.daily_lamport_cap),
+        if k.halt_after_unknown == 0 {
+            "never".to_owned()
+        } else {
+            format!("{} consecutive unknown outcomes", k.halt_after_unknown)
+        },
+        k.limits.max_compute_units,
+        k.limits.max_compute_unit_price,
+        k.limits.transfer_max_lamports.map_or_else(
+            || "-".to_owned(),
+            |m| format!("{m} lamports per transaction")
+        ),
+        list(&k.transfer_to),
+        list(&k.extra_programs),
+        k.policy,
+        if k.require_policy_approval {
+            " (signs only once approved: `key approve`)"
+        } else {
+            ""
+        },
+    );
+    if k.allow_unattended {
+        s.push_str("  allow_unattended: true (throwaway testnet keys only)\n");
+    }
+    s
+}
+
+fn list(v: &[Address]) -> String {
+    if v.is_empty() {
+        "-".to_owned()
+    } else {
+        v.iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+/// sha256 over a canonical JSON form of everything that decides what `key` may sign: each
+/// resolved field, the tokens that list it, the cluster and the instruction table's hash.
+pub fn policy_digest(
+    cluster: &Cluster,
+    key: &KeyConfig,
+    tokens: &[TokenConfig],
+    table: Option<&InstructionTable>,
+) -> Result<String> {
+    let sorted = |v: &[Address]| {
+        let mut out: Vec<String> = v.iter().map(ToString::to_string).collect();
+        out.sort();
+        out
+    };
+    let mut listed: Vec<(&str, &str)> = tokens
+        .iter()
+        .filter(|t| t.keys.contains(&key.name))
+        .map(|t| (t.name.as_str(), t.sha256.as_str()))
+        .collect();
+    listed.sort_unstable();
+    // Keys sorted by serde_json (or in this literal's order): canonical. Bump `v` on a change of meaning.
+    let form = serde_json::json!({
+        "v": 1,
+        "cluster": cluster.name,
+        "name": key.name,
+        "class": key.class.as_str(),
+        "allow_unattended": key.allow_unattended,
+        "pubkey": key.pubkey.to_string(),
+        "profile": key.profile.map(|p| p.to_string()),
+        "approval": key.approval.as_str(),
+        "transfer_to": sorted(&key.transfer_to),
+        "extra_programs": sorted(&key.extra_programs),
+        "rate_limit_per_minute": key.rate_limit_per_minute,
+        "daily_lamport_cap": key.daily_lamport_cap,
+        "halt_after_unknown": key.halt_after_unknown,
+        "max_compute_units": key.limits.max_compute_units,
+        "max_compute_unit_price": key.limits.max_compute_unit_price,
+        "transfer_max_lamports": key.limits.transfer_max_lamports,
+        "require_policy_approval": key.require_policy_approval,
+        "tokens": listed,
+        "instruction_table": table.map(|t| serde_json::json!({"sha256": t.sha256, "mode": t.mode.as_str()})),
+    });
+    Ok(crate::payload::hex(&Sha256::digest(serde_json::to_vec(
+        &form,
+    )?)))
 }
 
 fn serve_from_raw(raw: RawServe, keys: &[KeyConfig]) -> Result<ServeConfig> {
@@ -644,6 +726,129 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one digest per changed field reads better as one list"
+    )]
+    fn the_policy_digest_ignores_order_and_changes_with_each_field() {
+        const OTHER: &str = "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin";
+        let hash = "a".repeat(64);
+        let config = |key: &str, tokens: &str| {
+            format!(
+                "[keys.s]\nclass = \"session\"\npubkey = \"{KEY}\"\n{key}\n[keys.t]\nclass = \"session\"\npubkey = \"{KEY}\"\n[serve]\n{tokens}"
+            )
+        };
+        let token = |name: &str, keys: &str| {
+            format!("[[serve.tokens]]\nname = \"{name}\"\nsha256 = \"{hash}\"\nkeys = [{keys}]\n")
+        };
+        let lists = format!(
+            "transfer_to = [\"{KEY}\", \"{OTHER}\"]\nextra_programs = [\"{KEY}\", \"{OTHER}\"]"
+        );
+        let two = format!("{}{}", token("a", "\"s\", \"t\""), token("b", "\"s\""));
+        let digest = |key: &str, tokens: &str| {
+            parse(&config(key, tokens))
+                .unwrap()
+                .key("s")
+                .unwrap()
+                .policy
+                .clone()
+        };
+        let base = digest(&lists, &two);
+        assert_eq!(base.len(), 64, "a sha256 in hex: {base:?}");
+
+        let reordered = format!(
+            "transfer_to = [\"{OTHER}\", \"{KEY}\"]\nextra_programs = [\"{OTHER}\", \"{KEY}\"]"
+        );
+        let swapped = format!("{}{}", token("b", "\"s\""), token("a", "\"t\", \"s\""));
+        assert_eq!(digest(&reordered, &swapped), base, "order does not matter");
+        assert_ne!(
+            parse(&config(&lists, &two))
+                .unwrap()
+                .key("t")
+                .unwrap()
+                .policy,
+            base,
+            "each key has its own"
+        );
+
+        let changes = [
+            "approval = \"confirm\"".to_owned(),
+            format!("profile = \"{OTHER}\""),
+            "rate_limit_per_minute = 7".to_owned(),
+            "daily_lamport_cap = 7".to_owned(),
+            "halt_after_unknown = 7".to_owned(),
+            "max_compute_units = 7".to_owned(),
+            "max_compute_unit_price = 7".to_owned(),
+            "transfer_max_lamports = 7".to_owned(),
+            "require_policy_approval = true".to_owned(),
+        ];
+        let mut seen = vec![base];
+        for change in &changes {
+            let d = digest(&format!("{lists}\n{change}"), &two);
+            assert!(!seen.contains(&d), "{change} changes the digest");
+            seen.push(d);
+        }
+        for (key, tokens) in [
+            (
+                format!("transfer_to = [\"{KEY}\"]\nextra_programs = [\"{KEY}\", \"{OTHER}\"]"),
+                two.clone(),
+            ),
+            (
+                format!("transfer_to = [\"{KEY}\", \"{OTHER}\"]\nextra_programs = [\"{KEY}\"]"),
+                two,
+            ),
+            (lists.clone(), token("a", "\"s\", \"t\"")),
+            (
+                lists.clone(),
+                format!("{}{}", token("a", "\"s\", \"t\""), token("c", "\"s\"")),
+            ),
+            (
+                lists,
+                format!(
+                    "{}{}",
+                    token("a", "\"s\", \"t\""),
+                    token("b", "\"s\"").replace(&hash, &"b".repeat(64))
+                ),
+            ),
+        ] {
+            let d = digest(&key, &tokens);
+            assert!(!seen.contains(&d), "{key} / {tokens} changes the digest");
+            seen.push(d);
+        }
+        let wallet = parse(&format!(
+            "[keys.s]\nclass = \"wallet\"\npubkey = \"{KEY}\"\n"
+        ))
+        .unwrap();
+        let session = parse(&format!(
+            "[keys.s]\nclass = \"session\"\npubkey = \"{KEY}\"\napproval = \"confirm\"\n"
+        ))
+        .unwrap();
+        assert_ne!(
+            wallet.key("s").unwrap().policy,
+            session.key("s").unwrap().policy,
+            "the class counts"
+        );
+        let other_pubkey = parse(&format!(
+            "[keys.s]\nclass = \"session\"\npubkey = \"{OTHER}\"\napproval = \"confirm\"\n"
+        ))
+        .unwrap();
+        assert_ne!(
+            other_pubkey.key("s").unwrap().policy,
+            session.key("s").unwrap().policy,
+            "the pubkey counts"
+        );
+        let unattended = parse(&format!(
+            "[keys.s]\nclass = \"wallet\"\npubkey = \"{KEY}\"\nallow_unattended = true\n"
+        ))
+        .unwrap();
+        assert_ne!(
+            unattended.key("s").unwrap().policy,
+            wallet.key("s").unwrap().policy,
+            "allow_unattended counts"
+        );
+    }
+
+    #[test]
     fn the_example_loads_with_no_keys() {
         let c = parse(EXAMPLE).unwrap();
         assert!(c.keys.is_empty());
@@ -686,6 +891,7 @@ mod tests {
             "halt after:     3 consecutive unknown outcomes",
             "compute units:  at most 1400000, price at most 0 micro-lamports",
             "transfer max:   -",
+            "policy:         ",
             "listen:         127.0.0.1:8790",
             "token:          agent (keys: s)",
         ] {

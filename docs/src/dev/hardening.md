@@ -149,6 +149,8 @@ flowchart TD
 
 **Threat:** a change to a key's policy (its limits, destinations, extra programs, the tokens that may use it) takes effect silently at the next start, and the audit log does not record which policy a signature was made under.
 
+**Status: built.** How the build differs from the proposal: the digest covers each resolved key field (including `require_policy_approval`), the name and sha256 of each serve token that lists the key, the cluster, and the instruction table's sha256 and mode; the RPC URL, the explorer, the directories and `serve`'s address and hosts are left out, since they do not change what the key may sign. The `policy` field is on `sign`, `sign-intent` and `approve` entries; `halt` and `resume` entries carry none, since nothing is signed under them. The approval is a file under `state_dir/policy/` plus an `approve` audit entry, and an unreadable file refuses rather than passes. The `policy` refusal is sign-only, so `check` lists it in `sign_preview`. `key approve` on a key without `require_policy_approval` still records the approval and says the key does not wait for it.
+
 **Change:**
 
 - A digest per key: sha256 of a canonical form of the key's effective policy (every resolved `KeyConfig` field, the tokens that list it, the cluster, the instruction table's hash). `config show` and `key show` print it.

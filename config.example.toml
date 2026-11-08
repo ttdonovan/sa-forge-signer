@@ -19,6 +19,7 @@ cluster = "zink-testnet"
 # rate_limit_per_minute = 30
 # daily_lamport_cap = 50000000     # 0.05 ZINK
 # halt_after_unknown = 3           # halt the key after this many unknown outcomes in a row; 0 never
+# require_policy_approval = false  # sign only while the policy digest is the one `key approve` accepted
 # max_compute_units = 1400000      # highest SetComputeUnitLimit
 # max_compute_unit_price = 0       # highest SetComputeUnitPrice (micro-lamports); 0: no priority fee
 # extra_programs = []               # more programs this key may call at the top level. They are

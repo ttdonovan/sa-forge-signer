@@ -29,19 +29,20 @@ One binary crate; each module's `//!` comment is the authority if this page drif
 | Module | Owns |
 |---|---|
 | `main.rs` | The CLI (`check`, `sign`, `halt`, `resume`, `key`, `token`, `audit`, `serve`, `config`) and exit codes |
-| `config.rs` | Loading and validating `config.toml`: keys, classes, approval, limits, serve tokens; `config init` and `config show` |
+| `config.rs` | Loading and validating `config.toml`: keys, classes, approval, limits, serve tokens, each key's policy digest; `config init` and `config show` |
 | `cluster.rs` | Built-in cluster profiles: genesis hash, default RPC, explorer, and the programs any key may call |
 | `payload.rs` | The forge-mcp `build_*` payload (version 1): an instruction list, not a serialized transaction |
 | `transfer.rs` | Funding payloads: a plain System Program transfer in the same shape forge-mcp returns |
 | `checks.rs` | Structural checks on the compiled message; none decode game instructions |
 | `policy.rs` | Every check `check` and `sign` make, as one pure `evaluate` over the request, the key's policy and `Facts`, at a stage (`Check`, `BeforeSimulation`, `AfterSimulation`); returns every result in order. New checks go here |
 | `instruction_table.rs` | The hash-checked instruction table from `apps/idl-table`, and its findings (`instructions`, `accounts`, `profile`) on a compiled message, without decoding anything |
-| `facts.rs` | The reads behind `evaluate`: the halt, the key's usage from the audit log, and the RPC facts, read one at a time in check order |
+| `facts.rs` | The reads behind `evaluate`: the halt, the approved policy, the key's usage from the audit log, and the RPC facts, read one at a time in check order |
 | `engine.rs` | The check and sign pipeline: gather facts and evaluate, simulate, approval, the blockhash and duplicate guards, sign, send, confirm |
 | `rpc.rs` | The minimal Solana JSON-RPC client: only the calls the signer needs |
 | `keystore.rs` | The file key store: `<key_dir>/<name>.json`, 0700 directory, 0600 files; key create, import and destroy |
 | `audit.rs` | The append-only, hash-chained JSONL audit log, and the per-key signing lock |
 | `halt.rs` | Halts under `state_dir/halts/`: setting one, `resume` at the terminal, and the `halt_after_unknown` trip |
+| `policy_approval.rs` | Policy approvals under `state_dir/policy/`: `key approve` at the terminal, and the `policy` refusal |
 | `serve.rs` | `serve`: JSON over HTTP at `/v1/check`, `/v1/sign` and `/v1/halt`, MCP at `/mcp`, bearer-token auth |
 
 Checks and gates: `just check` runs `scripts/ci/check.sh` (fmt, clippy, tests, shellcheck, advisories, dependency age), the same gate as CI.

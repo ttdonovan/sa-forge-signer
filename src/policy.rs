@@ -51,6 +51,8 @@ pub struct Usage {
 #[derive(Debug, Default)]
 pub struct Facts {
     pub halt: Option<Halt>,
+    /// The key's approved policy digest, read only for a key that requires approval.
+    pub approved_policy: Option<String>,
     pub usage: Usage,
     pub genesis_hash: Option<String>,
     pub partial_signers_exist: Option<Vec<bool>>,
@@ -181,6 +183,11 @@ pub fn evaluate(
             .as_ref()
             .map_or(Ok(()), |h| Err(h.refusal(&key.name)))
             .into(),
+    );
+    add(
+        None,
+        true,
+        crate::policy_approval::check(key, facts.approved_policy.as_deref()).into(),
     );
     add(Some("chain"), false, chain(facts, policy.cluster));
     for (name, result) in checks::each(request.message, &structural) {
@@ -398,12 +405,15 @@ mod tests {
                 daily_lamport_cap: 1_000,
                 halt_after_unknown: 3,
                 limits: checks::Limits::DEFAULT,
+                require_policy_approval: false,
+                policy: "p".into(),
             },
             fee_payer: addr(1),
             instructions: vec![game_ix(), ata_create(addr(7))],
             partial: vec![],
             facts: Facts {
                 halt: None,
+                approved_policy: None,
                 usage: Usage {
                     signs_last_minute: 1,
                     spent: 500,
@@ -506,6 +516,21 @@ mod tests {
                 },
                 BEFORE,
                 "halt",
+            ),
+            (
+                "policy not approved",
+                |c| c.key.require_policy_approval = true,
+                BEFORE,
+                "policy",
+            ),
+            (
+                "policy changed since approval",
+                |c| {
+                    c.key.require_policy_approval = true;
+                    c.facts.approved_policy = Some("old".into());
+                },
+                BEFORE,
+                "policy",
             ),
             (
                 "wrong chain",
