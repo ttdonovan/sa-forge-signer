@@ -8,7 +8,7 @@ Proposals for the signer. A proposal that has shipped says **Status: built** and
 
 Three facts frame them:
 
-- **The signer is thin on purpose.** It checks what the chain does not, does not decode game instructions, and needs no IDL ([How it works](../how-it-works.md)). Proposal 4 changes that for a short list of fields, as an opt-in with its own data file, and says why.
+- **The signer is thin on purpose.** It checks what the chain does not, does not decode game instructions, and needs no IDL ([How it works](../how-it-works.md)). Proposal 4 adds an opt-in table of each instruction's shape (discriminator, account count, profile slots), generated from the IDLs into its own data file; it still decodes nothing.
 - **It is non-custodial for anything of value.** In Path B the human's wallet holds the profile; the signer holds a narrow, expiring session key ([Choosing a setup](../setup.md)). Nothing here makes it easier to hold the profile authority unattended.
 - **It is testnet-only and agent-facing.** The requester is an agent that can be prompt-injected, so every field a payload or its `summary` supplies is untrusted. Checks key on the compiled message, configured state, and what the signer reads from the chain itself.
 
@@ -23,14 +23,12 @@ flowchart TD
     P["1. One policy function"]
     C["5. Compute budget and transfer limits"]
     T["4. Instruction table and profile binding"]
-    G["6. Grant policy for wallet keys"]
     DG["7. Policy digest"]
     U["8. Redeploy watch and holds"]
     R["9. Reserved headroom"]
     B["10. RPC budgets in serve"]
     P --> C
     P --> T
-    T --> G
     T --> U
     T --> R
     P --> DG
@@ -39,7 +37,7 @@ flowchart TD
 
 1. Proposals 2 and 3 first: small, independent, and they close a wrong outcome and a missing control.
 2. Proposal 1 next: a refactor with no behaviour change except `check`'s preview, and the base the later checks plug into.
-3. Then 5, then 4 in report mode, then 4 enforced and 6.
+3. Then 5, then 4 in report mode, then 4 enforced.
 4. Then 7, 8, 9 and 10 as the need appears; 11 to 13 whenever convenient.
 
 ## 1. One policy function for check and sign
@@ -124,7 +122,7 @@ flowchart TD
 
 **Tests:** per rule, a passing message and a finding; a table whose hash does not match refuses to load; report mode never refuses; a key without `profile` gets a finding on each of its profile groups; a group whose signer is another key is not bound.
 
-**Priority:** high, in two steps: report mode (not breaking), then enforce mode (`feat!:`, since it refuses what was signed before). **Interactions:** built on proposal 1; proposals 6, 8 and 9 use the table.
+**Priority:** high, in two steps: report mode (not breaking), then enforce mode (`feat!:`, since it refuses what was signed before). **Interactions:** built on proposal 1; proposals 8 and 9 use the table.
 
 ## 5. Compute budget and System transfer limits
 
@@ -145,11 +143,7 @@ flowchart TD
 
 **Threat:** [Security](../security.md#not-covered) says the signer does not decode what a profile grant gives away, which is why a `wallet` key needs `confirm` unless `allow_unattended` is set. A prompt-injected agent with an unattended wallet key can add its own key with every permission.
 
-**Change:** with proposal 4's table, decode Player Profile `AddKeys` and `RemoveKeys` (the grant page already builds them) and check them for wallet keys: the new key must be listed in `keys.<name>.grant_to` (the signer's own session keys, by default), its scope must be SAGE, its permissions within `grant_max_permissions`, its expiry no later than `grant_max_days` from now, and `AUTH` never granted. `confirm` prompts show the decoded grant instead of the builder's `summary`. `allow_unattended` keeps its meaning, but a wallet key with these keys set and an enforced table could be allowed under `serve` with no other change; whether to allow that is a separate decision.
-
-**Tests:** grants inside and outside each bound; a grant to an unlisted key; a grant of `AUTH`; the decoded prompt text; the instruction layouts against the grant page's fixtures.
-
-**Priority:** high once proposal 4 exists; it removes a "Not covered" entry. **Interactions:** the grant page's permission bits are not from a primary source ([Grant page](../apps/grant.md)); the signer must not trust bit names further than the page does, so the bounds are masks, not names.
+**Status: dropped.** Checking a grant means decoding the arguments of Player Profile `AddKeys` and `RemoveKeys` (the new key, its permissions, its expiry), and the signer stays decoder-free (proposal 4). The gap stays in [Security](../security.md#not-covered): a `wallet` key needs `confirm` unless `allow_unattended` is set, and the profile authority of anything of value stays in the human's wallet (Path B).
 
 ## 7. Policy digest
 
