@@ -401,7 +401,7 @@ fn tools() -> Value {
     json!([
         {"name": "check", "description": "Run every check and a simulation on a payload. Never signs.", "inputSchema": payload_args},
         {"name": "sign", "description": "Check, simulate, sign, send and confirm a payload. Returns the JSON report.", "inputSchema": sign_args},
-        {"name": "key_show", "description": "Show a key this token may use: pubkey, class, approval, profile and balance.",
+        {"name": "key_show", "description": "Show a key this token may use: pubkey, class, approval, profile, balance, whether it is halted, and its policy digest and whether that is approved.",
          "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
         {"name": "halt", "description": "Stop all signing with a key (or every key this token may use) until a person resumes it at the signer's terminal. Use it when you notice you are misbehaving. You cannot resume it.",
          "inputSchema": {"type": "object", "properties": {
@@ -446,6 +446,14 @@ fn key_show(cfg: &Config, token: &TokenConfig, args: &Value) -> (String, bool) {
     let Ok(key) = cfg.key(name) else {
         return (format!("error: no key {name:?}"), true);
     };
+    let halted = match crate::halt::active(&cfg.state_dir, name) {
+        Ok(h) => h.map(|h| json!({"since": h.ts, "by": h.by, "reason": h.reason})),
+        Err(e) => return (format!("error: reading the halt: {e:#}"), true),
+    };
+    let approved = match crate::policy_approval::approved(&cfg.state_dir, name) {
+        Ok(a) => a.is_some_and(|a| a.policy == key.policy),
+        Err(e) => return (format!("error: reading the policy approval: {e:#}"), true),
+    };
     let balance = Rpc::new(&cfg.rpc_url).balance(&key.pubkey).ok();
     let info = json!({
         "name": key.name,
@@ -454,6 +462,12 @@ fn key_show(cfg: &Config, token: &TokenConfig, args: &Value) -> (String, bool) {
         "approval": format!("{:?}", key.approval).to_lowercase(),
         "profile": key.profile.map(|p| p.to_string()),
         "balance_lamports": balance,
+        "halted": halted,
+        "policy": {
+            "digest": key.policy,
+            "approval_required": key.require_policy_approval,
+            "approved": approved,
+        },
     });
     (
         serde_json::to_string_pretty(&info).unwrap_or_default(),
@@ -750,6 +764,59 @@ mod tests {
             crate::halt::active(&home.cfg.state_dir, "k")
                 .unwrap()
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn key_show_says_whether_the_key_is_halted_or_awaiting_approval() {
+        let home = crate::testrpc::Home::new(
+            "key-show",
+            &format!(
+                "require_policy_approval = true\n[serve]\n[[serve.tokens]]\nname = \"t\"\nsha256 = \"{}\"\nkeys = [\"k\"]\n",
+                token_hash("secret")
+            ),
+        );
+        let cfg = &home.cfg;
+        let token = &cfg.serve.as_ref().unwrap().tokens[0];
+        let show = || {
+            let (text, err) = key_show(cfg, token, &json!({"name": "k"}));
+            assert!(!err, "{text}");
+            serde_json::from_str::<Value>(&text).unwrap()
+        };
+        let digest = cfg.key("k").unwrap().policy.clone();
+        let v = show();
+        assert_eq!(v["halted"], Value::Null);
+        assert_eq!(
+            v["policy"],
+            json!({"digest": digest, "approval_required": true, "approved": false})
+        );
+        crate::policy_approval::approve(
+            &cfg.state_dir,
+            cfg.key("k").unwrap(),
+            Some(crate::halt::tests::term("yes\n")),
+            1,
+        )
+        .unwrap();
+        crate::halt::set(
+            &cfg.state_dir,
+            None,
+            &crate::halt::Halt {
+                ts: 2,
+                reason: "stop".into(),
+                by: "cli".into(),
+            },
+        )
+        .unwrap();
+        let v = show();
+        assert_eq!(v["policy"]["approved"], true);
+        assert_eq!(
+            v["halted"],
+            json!({"since": 2, "by": "cli", "reason": "stop"})
+        );
+        std::fs::write(cfg.state_dir.join("halts/all.json"), "{").unwrap();
+        assert!(
+            key_show(cfg, token, &json!({"name": "k"})).1,
+            "an unreadable halt is an error"
         );
     }
 
