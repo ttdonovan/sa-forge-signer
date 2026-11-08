@@ -34,6 +34,9 @@ use crate::theme;
 const POLL_EVERY: Duration = Duration::from_millis(500);
 /// How long a new row stays highlighted.
 const FRESH: Duration = Duration::from_secs(3);
+/// Between reads of only the appended lines, the whole log is read and its chain checked this often
+/// (if it changed), so an edit above the last line read is still seen.
+const FULL_EVERY: Duration = Duration::from_secs(60);
 
 pub struct Sources {
     pub config: Config,
@@ -221,6 +224,8 @@ pub struct Console {
     log_error: Option<String>,
     /// Length and mtime of the audit log when last read.
     stamp: Option<(u64, SystemTime)>,
+    /// When the log was last read whole, and its stamp then.
+    full: Option<(Instant, Option<(u64, SystemTime)>)>,
     /// When each entry appeared after the first read, for highlighting new rows.
     arrived: HashMap<usize, Instant>,
     key_filter: Option<String>,
@@ -284,6 +289,7 @@ impl Console {
             log: Snapshot::empty(),
             log_error: None,
             stamp: None,
+            full: None,
             arrived: HashMap::new(),
             key_filter: None,
             unresolved_only: false,
@@ -331,27 +337,40 @@ impl Console {
         let stamp = std::fs::metadata(path)
             .ok()
             .and_then(|m| Some((m.len(), m.modified().ok()?)));
-        if stamp.is_some() && stamp == self.stamp {
+        let whole = self
+            .full
+            .is_none_or(|(at, was)| at.elapsed() >= FULL_EVERY && was != stamp);
+        if !whole && stamp.is_some() && stamp == self.stamp {
             return false;
         }
-        match Snapshot::read(path) {
-            Ok(s) => {
-                let first = self.stamp.is_none();
-                let old = self.log.entries.len();
-                if !first && s.entries.len() > old {
+        let first = self.stamp.is_none();
+        let old = self.log.entries.len();
+        let read = if whole {
+            Snapshot::read(path).map(|s| self.log = s)
+        } else {
+            self.log.refresh(path)
+        };
+        match read {
+            Ok(()) => {
+                let new = self.log.entries.len();
+                if !first && new > old {
                     let now = Instant::now();
-                    for i in old..s.entries.len() {
+                    for i in old..new {
                         self.arrived.insert(i, now);
                     }
-                } else if s.entries.len() < old {
+                } else if new < old {
                     self.arrived.clear();
                 }
-                self.log = s;
+                if whole {
+                    self.full = Some((Instant::now(), stamp));
+                }
                 self.log_error = None;
                 self.stamp = stamp;
                 true
             }
             Err(e) => {
+                // A failed read may leave a partial snapshot: read it whole next time.
+                self.full = None;
                 self.log_error = Some(format!("reading {}: {e}", path.display()));
                 false
             }

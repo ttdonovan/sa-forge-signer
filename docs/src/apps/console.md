@@ -26,7 +26,7 @@ just apps console --config ./config.toml --state-dir ./state --url http://127.0.
 
 **Keys:** with the log focused, ↑ and ↓ move through the rows; `/` jumps to the filter box, and Esc leaves it or closes the detail panel. Cmd-Q quits.
 
-It re-reads `audit.jsonl` about twice a second when its size or modification time changes, and skips a last line still being written. The config supplies key classes, approval and limits; a key that appears only in the log is shown with the default limits. The config holds no secrets, only token hashes.
+It checks `audit.jsonl` about twice a second and, when its size or modification time has changed, reads only the lines appended since its last read, continuing the hash chain from there; a last line still being written is skipped. If the log shrank or the last line it read has changed, it reads the whole log again. An edit above that line would not be seen this way, so once a minute, if the log changed, it reads and checks the whole log. The config supplies key classes, approval and limits; a key that appears only in the log is shown with the default limits. The config holds no secrets, only token hashes.
 
 ## Access
 
