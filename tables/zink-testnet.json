@@ -92,7 +92,14 @@
         0,
         1
       ],
-      "profiles": [],
+      "profiles": [
+        {
+          "prefix": "",
+          "signer": 1,
+          "profile": 2,
+          "key_index": null
+        }
+      ],
       "funder": 0
     },
     {
@@ -289,7 +296,17 @@
         0,
         1
       ],
-      "profiles": [],
+      "profiles": [
+        {
+          "prefix": "",
+          "signer": 1,
+          "profile": 2,
+          "key_index": {
+            "arg": "keyIndex",
+            "offset": 8
+          }
+        }
+      ],
       "funder": 0
     },
     {
@@ -353,7 +370,17 @@
         0,
         1
       ],
-      "profiles": [],
+      "profiles": [
+        {
+          "prefix": "",
+          "signer": 0,
+          "profile": 2,
+          "key_index": {
+            "arg": "keyIndex",
+            "offset": 8
+          }
+        }
+      ],
       "funder": 1
     },
     {
@@ -800,6 +827,12 @@
             "arg": "keyIndex",
             "offset": 8
           }
+        },
+        {
+          "prefix": "",
+          "signer": 9,
+          "profile": 10,
+          "key_index": null
         }
       ],
       "funder": null

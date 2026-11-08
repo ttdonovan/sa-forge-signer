@@ -267,7 +267,8 @@ fn size_or(t: Option<&Value>, types: &[Value], depth: u8, default: usize) -> Opt
 
 /// `<prefix>Signer` and `<prefix>Profile` pairs, each with the key-index argument for it: named
 /// `<prefix>KeyIndex` (a trailing `Validation` dropped), else `keyIndex` for the `profile` and
-/// `profileValidation` groups, else the one argument and the one group left over.
+/// `profileValidation` groups, else the one argument and the one group left over. Then Player
+/// Profile's `key` and `profile`, with the empty prefix.
 fn groups(names: &[String], args: &[(String, Option<usize>)]) -> Vec<ProfileGroup> {
     let key_args: Vec<&(String, Option<usize>)> = args
         .iter()
@@ -324,6 +325,29 @@ fn groups(names: &[String], args: &[(String, Option<usize>)]) -> Vec<ProfileGrou
             offset: *offset,
         });
     }
+    // Player Profile names its own pair `key` and `profile`; it takes `keyIndex` only if unused.
+    if let (Some(signer), Some(profile)) = (
+        names.iter().position(|n| n == "key"),
+        names.iter().position(|n| n == "profile"),
+    ) {
+        let taken = |a: &str| {
+            out.iter()
+                .any(|g| g.key_index.as_ref().is_some_and(|k| k.arg == a))
+        };
+        let key_index = key_args
+            .iter()
+            .find(|(a, _)| a == "keyIndex" && !taken(a))
+            .map(|(arg, offset)| KeyIndex {
+                arg: arg.clone(),
+                offset: *offset,
+            });
+        out.push(ProfileGroup {
+            prefix: String::new(),
+            signer,
+            profile,
+            key_index,
+        });
+    }
     out
 }
 
@@ -372,7 +396,13 @@ mod tests {
         let names: Vec<&str> = t.instructions.iter().map(|i| i.name.as_str()).collect();
         assert_eq!(
             names,
-            ["adminRename", "moveFleet", "nameThing", "operatorAct"],
+            [
+                "addKeys",
+                "adminRename",
+                "moveFleet",
+                "nameThing",
+                "operatorAct"
+            ],
             "sorted"
         );
     }
@@ -391,6 +421,23 @@ mod tests {
                 prefix: "profileValidation".into(),
                 signer: 0,
                 profile: 1,
+                key_index: Some(KeyIndex {
+                    arg: "keyIndex".into(),
+                    offset: Some(8)
+                }),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_player_profile_key_and_profile_form_a_group() {
+        let t = fixture();
+        assert_eq!(
+            ix(&t, "addKeys").profiles,
+            [ProfileGroup {
+                prefix: String::new(),
+                signer: 1,
+                profile: 2,
                 key_index: Some(KeyIndex {
                     arg: "keyIndex".into(),
                     offset: Some(8)

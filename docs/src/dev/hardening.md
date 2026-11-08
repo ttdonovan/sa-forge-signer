@@ -1,5 +1,5 @@
 ---
-description: "Proposed hardening, each marked once built: one policy function for check and sign, a duplicate-signature guard, a halt, an instruction table with profile and paying-slot checks, compute-budget and transfer limits, policy digests, redeploy holds, RPC budgets and a systemd unit. The threat each addresses, what changes, tests, priority and build order"
+description: "Proposed hardening, each marked once built: one policy function for check and sign, a duplicate-signature guard, a halt, an instruction table with profile binding, compute-budget and transfer limits, policy digests, redeploy holds, RPC budgets and a systemd unit. The threat each addresses, what changes, tests, priority and build order"
 ---
 
 # Hardening proposals
@@ -22,7 +22,7 @@ flowchart TD
     H["3. Halt"]
     P["1. One policy function"]
     C["5. Compute budget and transfer limits"]
-    T["4. Instruction table, profile and paying slots"]
+    T["4. Instruction table and profile binding"]
     G["6. Grant policy for wallet keys"]
     DG["7. Policy digest"]
     U["8. Redeploy watch and holds"]
@@ -101,24 +101,26 @@ flowchart TD
 
 **Priority:** high. **Interactions:** with proposal 9, a halt could leave the reserved families open (`--except recovery`) so a stop never strands a fleet; until then a halt stops everything for that key. With the "Approval outside the terminal" item, `resume` moves to the approver channel.
 
-## 4. Instruction table: profile and paying slots
+## 4. Instruction table and profile binding
 
-**Threat:** the `programs` check looks only at program ids. Inside SAGE, Player Profile and Profile Faction, the chain checks that the signer is the key at the given index of the given profile, so for most instructions a wrong profile or index already fails in simulation. The gap is the paying slot: an instruction whose funder or payer is the signing key, while some account it creates or pays for (a character's or another profile's record) is not bound to the signer's own profile by the program. A requester can then make the key pay rent for someone else's accounts, the same class of leak `ata_owners` closes for token accounts. Which instructions have such slots is to be established from the programs' IDLs and tested by simulation. A wallet key that is the authority on several profiles also has no way to be held to one.
+**Threat:** the `programs` check looks only at program ids, so any instruction of SAGE, Player Profile or Profile Faction passes, including ones no builder emits and ones whose accounts are malformed. Inside those programs the chain checks that the signer is the key at the given index of the given profile, so a wrong index already fails in simulation; but a key that is a key of several profiles (a wallet key that is the authority on more than one, for example) can act for any of them, and nothing holds it to the one the operator meant.
 
 **Decoder-free:** every check here compares the compiled message with the table and the config. The signer reads no profile account and decodes no account data, so this proposal adds no RPC call and no account layout to follow across redeploys. What only a decoded profile could check is under "Not in this proposal" below.
 
 **Change:**
 
-- An instruction table, a data file per cluster: for each allowed instruction of SAGE, Player Profile and Profile Faction, keyed by program and discriminator, its name, the minimum (and where fixed, exact) account count, the slots that must hold the signing key, the slot that must hold the key's profile, and the paying slots: the funder, and the slots that must hold the key's profile or an address the program derives from it (its character, for example), where the IDL's seeds say so. Each row also records where its key index sits in the instruction data, unused by these checks. A family (`movement`, `cargo`, `mining`, `crafting`, `scanning`, `recovery`, `profile-admin`, ...) is added when proposal 9 needs it.
-- Config: `instruction_table = { path = "...", sha256 = "...", mode = "report" }` at the top level. The signer refuses to start if the file's hash differs, so a swapped table cannot widen anything. `mode = "report"` adds findings to the report and audit entry without refusing; `"enforce"` refuses. `keys.<name>.profile`, informational today, becomes binding when a table is configured: a key without it gets a `profile` finding on every instruction with a profile slot.
-- Checks, as named refusals: `instructions` (an unknown discriminator: unknown means refuse), `accounts` (too few or too many), `profile` (a signer slot does not hold the signing key, or the profile slot is not `keys.<name>.profile`), and `paying` (a paying slot holds something else).
-- Where the table comes from: generated from the programs' Codama IDLs by `apps/idl-table` into `tables/<cluster>.json`, holding only per-instruction facts and each IDL's sha256, so the IDLs are not checked in ([IDL table](../apps/idl-table.md)). The IDLs are not published on Z.ink testnet; today they come from a sage-forge checkout. What the IDL does not say (which profile group is the key's own, the paying slots) goes in hand-written annotations. Earlier options were a table written by hand from the IDLs, or generated. sage-forge's builders know each instruction's account order, so sage-forge could publish this table, versioned and hashed, from the same source as its `build_*` methods. That is an option, not a dependency: the signer reads a file, whoever wrote it.
+- An instruction table, a data file per cluster: for each instruction of SAGE, Player Profile and Profile Faction, keyed by program and discriminator, its name, the minimum and maximum account count, and its profile groups: each pair of a signer slot and the profile slot the program checks it against, with where the key index sits in the instruction data. Families (`movement`, `cargo`, `recovery`, ...) are added when proposal 9 needs them.
+- Config: `instruction_table = { path = "...", sha256 = "...", mode = "report" }` at the top level. The signer refuses to start if the file's hash differs, so a swapped table cannot widen anything. `mode = "report"` adds findings to the report and audit entry without refusing; `"enforce"` refuses. `keys.<name>.profile`, informational today, becomes binding when a table is configured.
+- Checks, as named refusals: `instructions` (an unknown discriminator: unknown means refuse), `accounts` (too few or too many), and `profile` (a profile group whose signer slot holds the signing key has a profile slot other than `keys.<name>.profile`, or the key has no `profile` set). Which group is the key's own is decided per payload, by which signer slot holds the key, so the table needs no hand-written part.
+- Where the table comes from: generated from the programs' Codama IDLs by `apps/idl-table` into `tables/<cluster>.json`, holding only per-instruction facts and each IDL's sha256, so the IDLs are not checked in ([IDL table](../apps/idl-table.md)). The IDLs are not published on Z.ink testnet; today they come from a sage-forge checkout. sage-forge's builders know each instruction's account order, so sage-forge could publish this table, versioned and hashed, from the same source as its `build_*` methods. That is an option, not a dependency: the signer reads a file, whoever wrote it.
+
+**Paying slots, dropped:** an earlier version of this proposal also bound the slots a key pays for to its own profile. In the IDLs, instructions that check a profile pay from the profile itself; only instructions with a `funder` signer take the key's lamports, and those are cranks anyone may run (respawn completion, rent, eviction, epoch rolls), where the sender paying for someone else's accounts is the design. Binding their `profile` slot would refuse legitimate cranks. What a key spends on them is bounded by its daily cap, and the table keeps the `funder` slot as a fact.
 
 **Not in this proposal:** reading and decoding the key's profile account with the layout `apps/grant/src/profile.rs` has. That would add a `key_index` check (the index is past the profile's key list, the entry is not the signing key, or it has expired), `key show`'s on-chain grant, and an optional `max_permissions` that refuses a grant wider than the operator meant to give. The chain already checks the signer against the profile at the given index, so `key_index` would mostly turn a failed simulation into an earlier refusal; `max_permissions` is the one new protection, and it can be proposed on its own if a need appears. The table keeps each key index's location, so that proposal would need no new table format.
 
 **What it costs:** the signer stops being IDL-free for these fields, and the table must follow every redeploy that adds or reorders instructions; in `enforce` mode a new instruction is refused until the table lists it. That is the intended failure direction, and proposal 8 tells the operator when to look.
 
-**Tests:** per row, a passing message and one refusal per rule; a table whose hash does not match refuses to load; report mode never refuses; a key without `profile` gets a finding on each profile slot.
+**Tests:** per rule, a passing message and a finding; a table whose hash does not match refuses to load; report mode never refuses; a key without `profile` gets a finding on each of its profile groups; a group whose signer is another key is not bound.
 
 **Priority:** high, in two steps: report mode (not breaking), then enforce mode (`feat!:`, since it refuses what was signed before). **Interactions:** built on proposal 1; proposals 6, 8 and 9 use the table.
 

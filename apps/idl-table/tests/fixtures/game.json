@@ -69,6 +69,19 @@
     },
     {
       "kind": "instructionNode",
+      "name": "addKeys",
+      "accounts": [
+        { "kind": "instructionAccountNode", "name": "funder", "isSigner": true, "isWritable": true },
+        { "kind": "instructionAccountNode", "name": "key", "isSigner": true, "isWritable": false },
+        { "kind": "instructionAccountNode", "name": "profile", "isSigner": false, "isWritable": true }
+      ],
+      "arguments": [
+        { "kind": "instructionArgumentNode", "name": "discriminator", "type": { "kind": "fixedSizeTypeNode", "size": 8, "type": { "kind": "bytesTypeNode" } }, "defaultValue": { "kind": "bytesValueNode", "data": "4142434445464748", "encoding": "base16" } },
+        { "kind": "instructionArgumentNode", "name": "keyIndex", "type": { "kind": "numberTypeNode", "format": "u16", "endian": "le" } }
+      ]
+    },
+    {
+      "kind": "instructionNode",
       "name": "nameThing",
       "accounts": [
         { "kind": "instructionAccountNode", "name": "profileSigner", "isSigner": true, "isWritable": false },
