@@ -475,8 +475,8 @@ fn unique_within_cap(
     report: Report,
 ) -> Result<std::result::Result<(Transaction, u64, u64, Report), Report>> {
     let key = gate.key;
-    let entries = Audit::new(&cfg.state_dir).entries()?;
     let now = now();
+    let entries = Audit::new(&cfg.state_dir).recent(now)?;
     let logged = |s: &str| seen(&entries, &key.name, s, now);
     let (tx, last_valid, mut report) = match unless_duplicate(
         rpc,
@@ -2130,6 +2130,31 @@ mod tests {
         let digest = |t| crate::config::policy_digest(home.cfg.cluster, key, &[], t).unwrap();
         assert_eq!(key.policy, digest(home.cfg.instruction_table.as_ref()));
         assert_ne!(key.policy, digest(None));
+    }
+
+    // A sign reads the log back only to the lookback, and the unknown streak only to a landed sign.
+    #[test]
+    fn a_sign_reads_only_the_recent_audit_log() {
+        let home = crate::testrpc::Home::new("bounded-reads", "");
+        let path = home.cfg.state_dir.join("audit.jsonl");
+        std::fs::create_dir_all(&home.cfg.state_dir).unwrap();
+        let old = Entry {
+            ts: 1,
+            key: "k".into(),
+            command: "sign".into(),
+            outcome: "confirmed".into(),
+            ..Entry::default()
+        };
+        std::fs::write(
+            &path,
+            format!("not json\n{}\n", serde_json::to_string(&old).unwrap()),
+        )
+        .unwrap();
+        let payload = act(&home, ACT, &home.pubkey);
+        let sign = Mode::Sign { intent: None };
+        let r = execute(&home.cfg, None, &payload, &sign, None).unwrap().0;
+        assert_eq!(r.outcome, Outcome::Confirmed, "{r:?}");
+        assert!(halt::trip_after_unknown(&home.cfg.state_dir, "k", 1, now()).is_ok());
     }
 
     #[test]

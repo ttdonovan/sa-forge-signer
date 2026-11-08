@@ -40,7 +40,7 @@ One binary crate; each module's `//!` comment is the authority if this page drif
 | `engine.rs` | The check and sign pipeline: gather facts and evaluate, simulate, approval, the blockhash and duplicate guards, sign, send, confirm |
 | `rpc.rs` | The minimal Solana JSON-RPC client: only the calls the signer needs |
 | `keystore.rs` | The file key store: `<key_dir>/<name>.json`, 0700 directory, 0600 files; key create, import and destroy |
-| `audit.rs` | The append-only, hash-chained JSONL audit log, and the per-key signing lock |
+| `audit.rs` | The append-only, hash-chained JSONL audit log, read back from the end for the checks (`recent`, `walk_back`), and the per-key signing lock |
 | `halt.rs` | Halts under `state_dir/halts/`: setting one, `resume` at the terminal, and the `halt_after_unknown` trip |
 | `policy_approval.rs` | Policy approvals under `state_dir/policy/`: `key approve` at the terminal, and the `policy` refusal |
 | `serve.rs` | `serve`: JSON over HTTP at `/v1/check`, `/v1/sign` and `/v1/halt`, MCP at `/mcp`, bearer-token auth |

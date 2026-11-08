@@ -30,7 +30,7 @@ pub fn local(state_dir: &Path, key: &KeyConfig, now: u64) -> Result<Facts> {
     Ok(Facts {
         halt: halt::active(state_dir, &key.name)?,
         approved_policy: approved,
-        usage: usage(&Audit::new(state_dir).entries()?, key, now),
+        usage: usage(&Audit::new(state_dir).recent(now)?, key, now),
         ..Facts::default()
     })
 }

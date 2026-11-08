@@ -33,6 +33,7 @@
 - **Rent for game-owned token accounts.** A token account created for a game account (for example another player's character or cargo cache) holds its rent where only the game program can move it. A requester can direct that rent into game accounts they control, if the game has an instruction that closes such accounts back to them. It is bounded by the daily cap and is about 0.002 ZINK per account.
 - **Wall-clock bounds.** The 150 s confirmation deadline does not include the checks and simulations before sending, and each RPC call may take up to 15 s. A stalled RPC can make one sign take a few minutes.
 - The audit log's hash chain detects edited entries, not truncation or a rewrite by someone who can write `state_dir`: keep that directory out of agents' reach, and copy the latest hash elsewhere if you need an anchor. `summary` and `intent` are caller-supplied and recorded as given; do not put secrets in them.
+- Signs read the audit log back only 48 h (see [How it works](https://ttdonovan.github.io/sa-forge-signer/how-it-works.html)), so a damaged or edited line older than that does not stop signing: only `audit verify` finds it. Run it regularly. If the system clock steps back by more than a day, entries written before the step can drop out of the rate limit, daily cap and duplicate check.
 
 ## Repairing the audit log
 

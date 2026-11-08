@@ -38,4 +38,4 @@ flowchart TD
     SEND -->|"no proof it landed:<br/>expired, 150 s, or the RPC kept failing"| U([unknown, exit 14:<br/>reconcile before retrying])
 ```
 
-It then signs, sends, and polls until the transaction is confirmed, or until its blockhash is past its last valid height or 150 s pass, which end as `unknown`. Every sign request is recorded in a hash-chained audit log; [Security](security.md) covers verifying and repairing it.
+It then signs, sends, and polls until the transaction is confirmed, or until its blockhash is past its last valid height or 150 s pass, which end as `unknown`. Every sign request is recorded in a hash-chained audit log; [Security](security.md) covers verifying and repairing it. The log is one file that only grows, so a sign reads it from the end and stops early: the rate limit, daily cap and duplicate check read back 48 h (their 24 h window plus a day of slack for a clock stepped back), the halt's `unknown` count reads back to the key's last landed sign or `resume`, and an append reads only the last line for its hash. `audit verify` and the [console](apps/console.md) still read every line.

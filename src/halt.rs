@@ -155,22 +155,31 @@ pub fn terminal() -> Option<std::fs::File> {
 
 /// This key's `unknown` outcomes since its last landed outcome (`confirmed` or `failed`) or the
 /// last `resume` covering it. Signs that sent nothing neither count nor reset.
+#[cfg(test)]
 pub fn unknown_streak(entries: &[Entry], key: &str) -> u32 {
     let mut streak: u32 = 0;
     for e in entries.iter().rev() {
-        if e.command == "resume" && (e.key == key || e.key == ALL_KEYS) {
+        if !count_back(&mut streak, e, key) {
             break;
-        }
-        if e.key != key || e.command != "sign" {
-            continue;
-        }
-        match e.outcome.as_str() {
-            "unknown" | "expired" => streak = streak.saturating_add(1),
-            "confirmed" | "failed" => break,
-            _ => {}
         }
     }
     streak
+}
+
+/// One step of the streak, newest entry first; false once the streak is decided.
+fn count_back(streak: &mut u32, e: &Entry, key: &str) -> bool {
+    if e.command == "resume" && (e.key == key || e.key == ALL_KEYS) {
+        return false;
+    }
+    if e.key != key || e.command != "sign" {
+        return true;
+    }
+    match e.outcome.as_str() {
+        "unknown" | "expired" => *streak = streak.saturating_add(1),
+        "confirmed" | "failed" => return false,
+        _ => {}
+    }
+    true
 }
 
 /// After a sign, under the key lock: halts the key once its `unknown` streak reaches `limit`
@@ -179,7 +188,8 @@ pub fn trip_after_unknown(state_dir: &Path, key: &str, limit: u32, now: u64) -> 
     if limit == 0 || active(state_dir, key)?.is_some() {
         return Ok(false);
     }
-    let streak = unknown_streak(&Audit::new(state_dir).entries()?, key);
+    let mut streak: u32 = 0;
+    Audit::new(state_dir).walk_back(|e| count_back(&mut streak, e, key))?;
     if streak < limit {
         return Ok(false);
     }
