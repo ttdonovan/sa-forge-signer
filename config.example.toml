@@ -16,6 +16,7 @@ cluster = "zink-testnet"
 # profile = "PROFILE_ADDRESS"
 # rate_limit_per_minute = 30
 # daily_lamport_cap = 50000000     # 0.05 ZINK
+# halt_after_unknown = 3           # halt the key after this many unknown outcomes in a row; 0 never
 # extra_programs = []               # more programs this key may call at the top level. They are
 #                                   # NOT trusted as game programs: token accounts can't be created
 #                                   # for accounts they own. Add only programs you trust.

@@ -13,13 +13,14 @@ The signer is deliberately thin: it does not decode game instructions and needs 
 5. **System Program:** only `Transfer`, and only to per-key allowed destinations. No account creation, assignment or allocation at the top level (forge-mcp creates new accounts inside the game programs).
 6. **Signers:** every required signer is the signing key or a payload partial signer, and partial signers do not exist on-chain yet.
 7. **Simulation** must succeed before anything is sent.
-8. **Limits:** a per-minute rate limit and a daily lamport cap per key, with signs serialized per key. The cap is checked against the simulation of the exact transaction about to be sent: what the key has spent or reserved in 24 h, plus this transaction's simulated spend and fee, must stay within it. A simulation that does not report the key's balance, or a missing fee estimate, is refused. The fee is quoted for the exact transaction sent, including after an approval rebuild. Each send is recorded first as an intent carrying that reservation; a spend whose outcome is not known is charged it.
+8. **Halt:** a key, or every key, halted with `halt` (or by its own `halt_after_unknown`) signs nothing until a person runs `resume` at a terminal ([Halting](check-and-sign.md#halting)).
+9. **Limits:** a per-minute rate limit and a daily lamport cap per key, with signs serialized per key. The cap is checked against the simulation of the exact transaction about to be sent: what the key has spent or reserved in 24 h, plus this transaction's simulated spend and fee, must stay within it. A simulation that does not report the key's balance, or a missing fee estimate, is refused. The fee is quoted for the exact transaction sent, including after an approval rebuild. Each send is recorded first as an intent carrying that reservation; a spend whose outcome is not known is charged it.
 
 In `sign`, after the simulation come approval (for a `confirm` key, then a fresh blockhash and a new simulation), the blockhash check, the duplicate check (a signature already in the audit log is re-signed once with a fresh blockhash, else refused), and the daily cap against that final simulation; only then is an intent recorded and the transaction sent. Each step can end the request, and the outcome says which kind of step stopped it (see [Checking and signing](check-and-sign.md#outcomes)):
 
 ```mermaid
 flowchart TD
-    P[Payload] --> PRE["Fee payer, chain, programs, tokens,<br/>System Program, signers, new accounts<br/>(sign: also the rate limit and the cap so far)"]
+    P[Payload] --> PRE["Fee payer, chain, programs, tokens,<br/>System Program, signers, new accounts<br/>(sign: also a halt, the rate limit and the cap so far)"]
     PRE -->|a check fails| R([refused, exit 10])
     PRE --> SIM[Simulate]
     SIM -->|the program rejects it| SF([simulation_failed, exit 11])

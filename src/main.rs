@@ -5,6 +5,7 @@ mod checks;
 mod cluster;
 mod config;
 mod engine;
+mod halt;
 mod keystore;
 mod payload;
 mod rpc;
@@ -55,6 +56,21 @@ enum Command {
         intent: Option<String>,
         /// Payload file, or '-' for stdin
         payload: String,
+    },
+    /// Stop all signing with one key, or every key, until `resume`; `check` still runs
+    Halt {
+        /// The key to halt [default: every key]
+        #[arg(long)]
+        key: Option<String>,
+        /// Why, recorded in the audit log and shown by every refused sign
+        #[arg(long)]
+        reason: String,
+    },
+    /// Lift a halt after confirming at the terminal (never stdin); nothing else lifts one
+    Resume {
+        /// The key to resume [default: the halt on every key; a key's own halt needs --key]
+        #[arg(long)]
+        key: Option<String>,
     },
     /// Manage keys in the key store
     #[command(subcommand)]
@@ -177,6 +193,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 &Mode::Sign { intent },
             )?)
         }
+        Command::Halt { key, reason } => halt_command(&path, key.as_deref(), &reason),
+        Command::Resume { key } => resume_command(&path, key.as_deref()),
         Command::Key(cmd) => key_command(&path, cmd),
         Command::Config(ConfigCommand::Init) => {
             config::init(&path)?;
@@ -226,6 +244,54 @@ fn run(cli: Cli) -> Result<ExitCode> {
             }
         }
     }
+}
+
+/// `halt`: writes the halt and its audit entry; `check` still runs.
+fn halt_command(path: &std::path::Path, key: Option<&str>, reason: &str) -> Result<ExitCode> {
+    let cfg = Config::load(path, true)?;
+    if let Some(k) = key {
+        cfg.key(k)?;
+    }
+    let reason = reason.trim();
+    if reason.is_empty() {
+        bail!("--reason must not be empty");
+    }
+    let h = halt::Halt {
+        ts: engine::now(),
+        reason: reason.to_owned(),
+        by: "cli".to_owned(),
+    };
+    halt::set(&cfg.state_dir, key, &h)?;
+    eprintln!(
+        "halted {}; lift it with `sa-forge-signer resume{}` at a terminal",
+        key.map_or_else(|| "every key".to_owned(), |k| format!("key {k:?}")),
+        key.map_or_else(String::new, |k| format!(" --key {k}"))
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `resume`: only at the controlling terminal.
+fn resume_command(path: &std::path::Path, key: Option<&str>) -> Result<ExitCode> {
+    let cfg = Config::load(path, true)?;
+    if let Some(k) = key {
+        cfg.key(k)?;
+    }
+    let scope = key.map_or_else(|| "every key".to_owned(), |k| format!("key {k:?}"));
+    if halt::resume(&cfg.state_dir, key, halt::terminal(), engine::now())? {
+        eprintln!("resumed {scope}");
+    } else {
+        eprintln!("{scope} was not halted; nothing changed");
+    }
+    let still: Vec<&str> = cfg
+        .keys
+        .iter()
+        .filter(|k| matches!(halt::active(&cfg.state_dir, &k.name), Ok(Some(_))))
+        .map(|k| k.name.as_str())
+        .collect();
+    if !still.is_empty() {
+        eprintln!("still halted: {}", still.join(", "));
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn key_command(path: &std::path::Path, cmd: KeyCommand) -> Result<ExitCode> {
@@ -305,8 +371,13 @@ fn key_command(path: &std::path::Path, cmd: KeyCommand) -> Result<ExitCode> {
             let balance = rpc::Rpc::new(&cfg.rpc_url)
                 .balance(&key.pubkey)
                 .map_or_else(|e| format!("unavailable: {e}"), |l| format!("{l} lamports"));
+            let halted = match halt::active(&cfg.state_dir, &name) {
+                Ok(None) => "no".to_owned(),
+                Ok(Some(h)) => format!("since {} by {}: {}", h.ts, h.by, h.reason),
+                Err(e) => format!("unreadable: {e:#}"),
+            };
             println!(
-                "name:     {}\npubkey:   {}\nclass:    {:?}\napproval: {:?}\nprofile:  {}\nkey file: {file}\nbalance:  {balance}",
+                "name:     {}\npubkey:   {}\nclass:    {:?}\napproval: {:?}\nprofile:  {}\nkey file: {file}\nbalance:  {balance}\nhalted:   {halted}",
                 key.name,
                 key.pubkey,
                 key.class,

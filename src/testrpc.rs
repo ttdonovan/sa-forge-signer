@@ -22,8 +22,6 @@ pub struct Node {
     /// Blockhashes handed out in order; the last repeats.
     pub blockhashes: Mutex<VecDeque<Hash>>,
     pub sends: Mutex<u32>,
-    /// `unknown` for every sign: no status is ever found and the blockhash is already past.
-    pub never_lands: Mutex<bool>,
 }
 
 impl Node {
@@ -42,18 +40,13 @@ impl Node {
         self.sends.lock().map_or(0, |s| *s)
     }
 
-    fn lost(&self) -> bool {
-        self.never_lands.lock().is_ok_and(|l| *l)
-    }
-
     fn answer(&self, method: &str, params: &Value) -> Value {
-        let lost = self.lost();
         match method {
             "getGenesisHash" => json!(ZINK_TESTNET.genesis_hash),
             "getLatestBlockhash" => {
                 json!({"value": {"blockhash": self.blockhash().to_string(), "lastValidBlockHeight": 1_000}})
             }
-            "getBlockHeight" => json!(if lost { 2_000 } else { 10 }),
+            "getBlockHeight" => json!(10),
             "getBalance" => json!({"value": BALANCE}),
             "getMultipleAccounts" => {
                 let n = params[0].as_array().map_or(0, Vec::len);
@@ -70,7 +63,6 @@ impl Node {
                 }
                 json!("sent")
             }
-            "getSignatureStatuses" if lost => json!({"value": [null]}),
             "getSignatureStatuses" => {
                 json!({"value": [{"slot": 7, "err": null, "confirmationStatus": "confirmed"}]})
             }
@@ -104,6 +96,7 @@ pub fn start(node: &Arc<Node>) -> String {
 /// [`dest`]. `extra` is appended to the config.
 pub struct Home {
     pub dir: PathBuf,
+    pub path: PathBuf,
     pub cfg: Config,
     pub pubkey: Address,
     pub node: Arc<Node>,
@@ -138,6 +131,7 @@ impl Home {
         let cfg = Config::load(&path, true).unwrap();
         Self {
             dir,
+            path,
             cfg,
             pubkey,
             node,

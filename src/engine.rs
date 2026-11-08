@@ -18,6 +18,7 @@ use zeroize::Zeroizing;
 use crate::audit::{Audit, Entry, KeyLock};
 use crate::checks::{self, Policy, Refusal, refuse as refusal};
 use crate::config::{Approval, Config, KeyConfig};
+use crate::halt;
 use crate::keystore::KeyStore;
 use crate::payload::Payload;
 use crate::rpc::{Chain, Rpc, RpcError, Simulation, Status, delta};
@@ -65,6 +66,8 @@ pub struct Report {
     pub program_error: Option<String>,
     pub error: Option<Value>,
     pub checks: Vec<&'static str>,
+    /// `check` only: what `sign` would refuse now that `check` does not.
+    pub sign_preview: Option<SignPreview>,
     pub compute_units: Option<u64>,
     pub fee: Option<u64>,
     pub balance_change: Option<i64>,
@@ -73,6 +76,12 @@ pub struct Report {
     pub warnings: Vec<String>,
     pub payload_hash: String,
     pub logs: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SignPreview {
+    /// The sign-only checks that would refuse, in order.
+    pub refusals: Vec<Refusal>,
 }
 
 impl Report {
@@ -88,6 +97,7 @@ impl Report {
             program_error: None,
             error: None,
             checks: Vec::new(),
+            sign_preview: None,
             compute_units: None,
             fee: None,
             balance_change: None,
@@ -158,7 +168,7 @@ pub fn execute(
     } else {
         None
     };
-    let (report, sent) = if authorized {
+    let (mut report, sent) = if authorized {
         pipeline(cfg, key, &payload, mode)?
     } else {
         let r = refusal(
@@ -167,6 +177,9 @@ pub fn execute(
         );
         (Report::new(&payload, key).refused(&r), false)
     };
+    if !signing && authorized {
+        report.sign_preview = Some(sign_preview(cfg, key)?);
+    }
     if signing {
         let entry = Entry {
             ts: now(),
@@ -190,8 +203,42 @@ pub fn execute(
             ..Entry::default()
         };
         Audit::new(&cfg.state_dir).append(entry)?;
+        if report.outcome == Outcome::Unknown {
+            after_unknown(cfg, key, &mut report);
+        }
     }
     Ok((report, sent, !payload.partial_signers.is_empty()))
+}
+
+/// What `sign` would refuse now that `check` does not: a halt.
+fn sign_preview(cfg: &Config, key: &KeyConfig) -> Result<SignPreview> {
+    let mut refusals = Vec::new();
+    if let Some(h) = halt::active(&cfg.state_dir, &key.name)? {
+        refusals.push(h.refusal(&key.name));
+    }
+    Ok(SignPreview { refusals })
+}
+
+/// Under the key lock, after an `unknown` sign is logged: halts the key once its streak reaches
+/// `halt_after_unknown`, and says so in the report. The sign's own outcome stands either way.
+fn after_unknown(cfg: &Config, key: &KeyConfig, report: &mut Report) {
+    let note = match halt::trip_after_unknown(
+        &cfg.state_dir,
+        &key.name,
+        key.halt_after_unknown,
+        now(),
+    ) {
+        Ok(true) => format!(
+            "key {:?} is now halted after {} consecutive unknown outcomes; reconcile them, then `sa-forge-signer resume --key {}` at a terminal",
+            key.name, key.halt_after_unknown, key.name
+        ),
+        Ok(false) => return,
+        Err(e) => format!("could not check or write the halt_after_unknown halt: {e:#}"),
+    };
+    report.detail = Some(match report.detail.take() {
+        Some(d) => format!("{d}; {note}"),
+        None => note,
+    });
 }
 
 /// Checks that need no key. Returns the compiled message, its blockhash and last valid block height.
@@ -217,6 +264,10 @@ fn preflight(
             "approval",
             format!("key {:?} is set to deny", key.name),
         )));
+    }
+    // Read under the key lock, so a halt written by any process stops the next sign.
+    if signing && let Some(h) = halt::active(&cfg.state_dir, &key.name)? {
+        return Ok(Err(h.refusal(&key.name)));
     }
     let genesis = rpc.genesis_hash()?;
     if genesis != cfg.cluster.genesis_hash {
@@ -984,6 +1035,7 @@ mod tests {
             extra_programs: vec![],
             rate_limit_per_minute: 2,
             daily_lamport_cap: 1_000,
+            halt_after_unknown: 3,
         }
     }
 
@@ -1274,6 +1326,7 @@ mod tests {
             program_error: None,
             error: None,
             checks: vec![],
+            sign_preview: None,
             compute_units: None,
             fee: None,
             balance_change: Some(-1),
@@ -1781,6 +1834,83 @@ mod tests {
         assert_ne!(first.signature, second.signature);
         assert!(second.checks.contains(&"duplicate"));
         assert_eq!(home.node.sends(), 2);
+    }
+
+    fn check(home: &crate::testrpc::Home) -> Report {
+        execute(&home.cfg, None, &home.payload(1), &Mode::Check, None)
+            .unwrap()
+            .0
+    }
+
+    fn halt_on(home: &crate::testrpc::Home, key: Option<&str>) {
+        let h = crate::halt::Halt {
+            ts: 1,
+            reason: "looks wrong".into(),
+            by: "cli".into(),
+        };
+        crate::halt::set(&home.cfg.state_dir, key, &h).unwrap();
+    }
+
+    #[test]
+    fn a_halted_key_refuses_to_sign_and_check_previews_it() {
+        let home = crate::testrpc::Home::new("halt-sign", "");
+        assert_eq!(sign(&home).outcome, Outcome::Confirmed);
+        let clean = check(&home);
+        assert_eq!(clean.sign_preview.map(|p| p.refusals.len()), Some(0));
+        halt_on(&home, Some("k"));
+        let r = sign(&home);
+        assert_eq!(
+            (r.outcome, r.failed_check),
+            (Outcome::Refused, Some("halt"))
+        );
+        assert!(r.detail.is_some_and(|d| d.contains("looks wrong")));
+        assert_eq!(home.node.sends(), 1, "nothing sent while halted");
+        let c = check(&home);
+        assert_eq!(c.outcome, Outcome::Ok, "check still runs");
+        let preview = c.sign_preview.unwrap();
+        assert_eq!(
+            preview.refusals.iter().map(|r| r.check).collect::<Vec<_>>(),
+            ["halt"]
+        );
+        let last = Audit::new(&home.cfg.state_dir).entries().unwrap();
+        assert_eq!(last.last().unwrap().outcome, "refused");
+    }
+
+    #[test]
+    fn a_halt_on_every_key_refuses_this_key_too() {
+        let home = crate::testrpc::Home::new("halt-all", "");
+        halt_on(&home, None);
+        assert_eq!(sign(&home).failed_check, Some("halt"));
+    }
+
+    #[test]
+    fn repeated_unknown_outcomes_halt_the_key() {
+        let home = crate::testrpc::Home::new("halt-trip", "halt_after_unknown = 2\n");
+        let key = home.cfg.key("k").unwrap();
+        let audit = Audit::new(&home.cfg.state_dir);
+        let report = || Report {
+            outcome: Outcome::Unknown,
+            ..blank()
+        };
+        audit.append(sign_final(1, "a", "unknown", None)).unwrap();
+        let mut first = report();
+        after_unknown(&home.cfg, key, &mut first);
+        assert!(
+            crate::halt::active(&home.cfg.state_dir, "k")
+                .unwrap()
+                .is_none()
+        );
+        audit.append(sign_final(2, "b", "unknown", None)).unwrap();
+        let mut second = report();
+        after_unknown(&home.cfg, key, &mut second);
+        assert!(second.detail.is_some_and(|d| d.contains("halted")));
+        assert_eq!(sign(&home).failed_check, Some("halt"));
+    }
+
+    #[test]
+    fn halt_after_unknown_defaults_to_three() {
+        let home = crate::testrpc::Home::new("halt-default", "");
+        assert_eq!(home.cfg.key("k").unwrap().halt_after_unknown, 3);
     }
 
     #[test]

@@ -16,6 +16,8 @@ sa-forge-signer sign --intent "scan round" payload.json
 sa-forge-signer key show alice-session
 sa-forge-signer key fund alice-session --zink 0.05 --from alice-wallet --out fund.json
 sa-forge-signer key destroy alice-session
+sa-forge-signer halt --key alice-session --reason "fleet looks wrong"
+sa-forge-signer resume --key alice-session         # at a terminal only
 sa-forge-signer audit verify
 ```
 
@@ -23,7 +25,7 @@ The config lives at `~/.config/sa-forge-signer/config.toml` unless `--config` or
 
 ## The report
 
-`check` and `sign` print one JSON report (`outcome`, `signature`, `slot`, `explorer`, `detail`, `failed_check`, `program_error`, `error`, `checks`, `compute_units`, `fee`, `balance_change`, `summary`, `logs`). `checks` lists the checks that passed; on a refusal `failed_check` names the one that failed. `program_error` is the program's own message from the logs, on a failed simulation or a transaction that landed with an error. For a landed transaction, `balance_change` and `fee` come from the transaction's own metadata, so parallel transactions from the same key do not skew them; for `check` they are simulated. The payload's `summary` comes from the builder and is not verified.
+`check` and `sign` print one JSON report (`outcome`, `signature`, `slot`, `explorer`, `detail`, `failed_check`, `program_error`, `error`, `checks`, `sign_preview`, `compute_units`, `fee`, `balance_change`, `summary`, `logs`). `checks` lists the checks that passed; on a refusal `failed_check` names the one that failed. `sign_preview` is set by `check` only (`null` from `sign`): `refusals` lists, as `{"check", "detail"}`, what `sign` would refuse now that `check` does not, today a [halt](#halting). `check`'s `outcome` does not change with it. `program_error` is the program's own message from the logs, on a failed simulation or a transaction that landed with an error. For a landed transaction, `balance_change` and `fee` come from the transaction's own metadata, so parallel transactions from the same key do not skew them; for `check` they are simulated. The payload's `summary` comes from the builder and is not verified.
 
 ## Outcomes
 
@@ -51,6 +53,14 @@ After `unknown`, an HTTP `500`, a dropped connection or a restarted service, the
 3. Retry only if the action did not happen.
 
 The per-key lock and the intent entry stop concurrent signs from racing the limits; they do not stop a caller from sending the same action twice with a new blockhash.
+
+## Halting
+
+`sa-forge-signer halt --reason <text>` stops signing with every key, and `--key <name>` with one. It takes effect on the next sign, in the CLI and in a running `serve` alike: every `sign` reads it under the key lock and is refused with `failed_check` `halt` and the reason, and nothing is sent. A sign already running when the halt is written finishes. `check` still runs and lists the halt in `sign_preview`. The halt is a file under `state_dir/halts/`, and it and its lifting are recorded in the audit log as `halt` and `resume` entries (`key` `*` for every key).
+
+Only `sa-forge-signer resume` lifts a halt, and only after someone types `yes` at the controlling terminal (never stdin; without a terminal it refuses). `resume --key <name>` lifts that key's own halt, and `resume` alone lifts the halt on every key; a key's own halt is not lifted by it. `serve` has a `halt` route and MCP tool but no way to resume ([Serving over HTTP and MCP](serve.md)). `key show` prints whether the key is halted.
+
+A key also halts itself after `halt_after_unknown` consecutive `unknown` outcomes (default 3, `0` never; see [Configuration](configuration.md)), a sign that the RPC or the transactions are in trouble. A landed outcome (`confirmed` or `failed`) or a `resume` resets the count; signs that sent nothing neither count nor reset it. The sign that trips it says so in `detail`. Reconcile those signatures before resuming.
 
 ## Partial signers
 

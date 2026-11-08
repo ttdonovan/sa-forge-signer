@@ -75,6 +75,13 @@ flowchart TD
 
 **Threat:** under `serve`, the only ways to stop one key are editing `approval = "deny"` and restarting, or stopping the service with its 230 s drain. An operator who sees something wrong needs a stop that takes effect on the next request and does not lift itself.
 
+**Status: built.** How it differs from the proposal below:
+
+- `check` reports a halt in a `sign_preview` field with a `refusals` list, added here ahead of proposal 1, which adds the other sign-only gates and `needs_approval` to it.
+- `halt_after_unknown` is a per-key setting (default 3, `0` never). A landed outcome (`confirmed` or `failed`) or a `resume` resets the count; refused and failed-simulation signs neither count nor reset it. The default refuses signs that were allowed before, so it shipped as a breaking change.
+- A token's halt without `key` writes one halt per key the token lists, never the halt on every key. It does not wait for the key lock, so a sign already running finishes.
+- `resume` without `--key` lifts only the halt on every key; each key's own halt needs `resume --key`. Audit entries for the halt on every key use `key` `*`.
+
 **Change:**
 
 - `sa-forge-signer halt [--key <name>] --reason <text>` writes a halt record under `state_dir` (all keys, or one) and appends a `halt` entry to the audit log. Every `sign` reads it under the key lock (it is a field of `Facts`) and refuses with `failed_check` `halt` and the reason. `check` still runs and lists it in `sign_preview`.

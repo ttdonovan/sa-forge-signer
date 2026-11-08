@@ -112,6 +112,7 @@ struct RawKey {
     extra_programs: Vec<String>,
     rate_limit_per_minute: Option<u32>,
     daily_lamport_cap: Option<u64>,
+    halt_after_unknown: Option<u32>,
     /// Wallet keys only: permit `approval = "auto"` and serve tokens. Off by default; only for a
     /// throwaway testnet key whose grants you do not mind an agent choosing.
     #[serde(default)]
@@ -133,6 +134,8 @@ pub struct KeyConfig {
     pub extra_programs: Vec<Address>,
     pub rate_limit_per_minute: u32,
     pub daily_lamport_cap: u64,
+    /// Consecutive `unknown` outcomes that halt the key; 0 never does.
+    pub halt_after_unknown: u32,
 }
 
 pub struct Config {
@@ -163,6 +166,7 @@ pub struct TokenConfig {
 /// Defaults sized for burst play loops; 0.05 ZINK per day.
 const DEFAULT_RATE_PER_MINUTE: u32 = 30;
 const DEFAULT_DAILY_LAMPORT_CAP: u64 = 50_000_000;
+const DEFAULT_HALT_AFTER_UNKNOWN: u32 = 3;
 
 pub fn parse_address(field: &str, value: &str) -> Result<Address> {
     Address::from_str(value).map_err(|e| anyhow::anyhow!("{field}: invalid address {value:?}: {e}"))
@@ -265,6 +269,7 @@ impl Config {
                 approval,
                 rate_limit_per_minute: k.rate_limit_per_minute.unwrap_or(DEFAULT_RATE_PER_MINUTE),
                 daily_lamport_cap: k.daily_lamport_cap.unwrap_or(DEFAULT_DAILY_LAMPORT_CAP),
+                halt_after_unknown: k.halt_after_unknown.unwrap_or(DEFAULT_HALT_AFTER_UNKNOWN),
                 name,
             });
         }
@@ -324,7 +329,7 @@ impl Config {
         for k in &self.keys {
             let _ = write!(
                 s,
-                "\n[keys.{}]\n  pubkey:         {}\n  class:          {}\n  approval:       {}\n  key file:       {}\n  profile:        {}\n  rate limit:     {} per minute\n  daily cap:      {} lamports ({} ZINK)\n  transfer_to:    {}\n  extra_programs: {}\n",
+                "\n[keys.{}]\n  pubkey:         {}\n  class:          {}\n  approval:       {}\n  key file:       {}\n  profile:        {}\n  rate limit:     {} per minute\n  daily cap:      {} lamports ({} ZINK)\n  halt after:     {}\n  transfer_to:    {}\n  extra_programs: {}\n",
                 k.name,
                 k.pubkey,
                 k.class.as_str(),
@@ -338,6 +343,11 @@ impl Config {
                 k.rate_limit_per_minute,
                 k.daily_lamport_cap,
                 zink(k.daily_lamport_cap),
+                if k.halt_after_unknown == 0 {
+                    "never".to_owned()
+                } else {
+                    format!("{} consecutive unknown outcomes", k.halt_after_unknown)
+                },
                 list(&k.transfer_to),
                 list(&k.extra_programs),
             );
@@ -587,6 +597,7 @@ mod tests {
             "key file:       missing",
             "rate limit:     30 per minute",
             "daily cap:      50000000 lamports (0.05 ZINK)",
+            "halt after:     3 consecutive unknown outcomes",
             "listen:         127.0.0.1:8790",
             "token:          agent (keys: s)",
         ] {

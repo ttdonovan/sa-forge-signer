@@ -27,7 +27,7 @@ One binary crate; each module's `//!` comment is the authority if this page drif
 
 | Module | Owns |
 |---|---|
-| `main.rs` | The CLI (`check`, `sign`, `key`, `token`, `audit`, `serve`, `config`) and exit codes |
+| `main.rs` | The CLI (`check`, `sign`, `halt`, `resume`, `key`, `token`, `audit`, `serve`, `config`) and exit codes |
 | `config.rs` | Loading and validating `config.toml`: keys, classes, approval, limits, serve tokens; `config init` and `config show` |
 | `cluster.rs` | Built-in cluster profiles: genesis hash, default RPC, explorer, and the programs any key may call |
 | `payload.rs` | The forge-mcp `build_*` payload (version 1): an instruction list, not a serialized transaction |
@@ -37,6 +37,7 @@ One binary crate; each module's `//!` comment is the authority if this page drif
 | `rpc.rs` | The minimal Solana JSON-RPC client: only the calls the signer needs |
 | `keystore.rs` | The file key store: `<key_dir>/<name>.json`, 0700 directory, 0600 files; key create, import and destroy |
 | `audit.rs` | The append-only, hash-chained JSONL audit log, and the per-key signing lock |
-| `serve.rs` | `serve`: JSON over HTTP at `/v1/check` and `/v1/sign`, MCP at `/mcp`, bearer-token auth |
+| `halt.rs` | Halts under `state_dir/halts/`: setting one, `resume` at the terminal, and the `halt_after_unknown` trip |
+| `serve.rs` | `serve`: JSON over HTTP at `/v1/check`, `/v1/sign` and `/v1/halt`, MCP at `/mcp`, bearer-token auth |
 
 Checks and gates: `just check` runs `scripts/ci/check.sh` (fmt, clippy, tests, shellcheck, advisories, dependency age), the same gate as CI.

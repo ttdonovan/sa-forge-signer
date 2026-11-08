@@ -9,7 +9,7 @@ use solana_message::compiled_instruction::CompiledInstruction;
 
 use crate::cluster::{ASSOCIATED_TOKEN_PROGRAM, SYSTEM_PROGRAM, TOKEN_2022_PROGRAM, TOKEN_PROGRAM};
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, serde::Serialize)]
 pub struct Refusal {
     pub check: &'static str,
     pub detail: String,

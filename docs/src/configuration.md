@@ -26,6 +26,7 @@ Only `class` and `pubkey` on each key, and a token for `serve`, have to be set; 
 | `allow_unattended` | `false` | a throwaway testnet wallet key must be `"auto"` or on a serve token |
 | `rate_limit_per_minute` | `30` | the agent signs faster than that |
 | `daily_lamport_cap` | `50000000` (0.05 ZINK) | the key spends more in 24 h (fees and transfers it signs) |
+| `halt_after_unknown` | `3` | the key should [halt](check-and-sign.md#halting) after more or fewer consecutive `unknown` outcomes; `0` never halts it |
 | `transfer_to` | none | the key funds other accounts with ZINK, such as a wallet funding its session key or vault |
 | `extra_programs` | none | the key must call a program outside the built-in list ([How it works](how-it-works.md)); add only programs you trust |
 | `[serve] listen` | `"127.0.0.1:8790"` | `serve` should listen elsewhere (in Docker, `"0.0.0.0:8790"`) |
