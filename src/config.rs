@@ -10,6 +10,7 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use solana_address::Address;
 
+use crate::checks::Limits;
 use crate::cluster::{self, Cluster};
 use crate::keystore::KeyStore;
 
@@ -113,6 +114,9 @@ struct RawKey {
     rate_limit_per_minute: Option<u32>,
     daily_lamport_cap: Option<u64>,
     halt_after_unknown: Option<u32>,
+    max_compute_units: Option<u32>,
+    max_compute_unit_price: Option<u64>,
+    transfer_max_lamports: Option<u64>,
     /// Wallet keys only: permit `approval = "auto"` and serve tokens. Off by default; only for a
     /// throwaway testnet key whose grants you do not mind an agent choosing.
     #[serde(default)]
@@ -136,6 +140,8 @@ pub struct KeyConfig {
     pub daily_lamport_cap: u64,
     /// Consecutive `unknown` outcomes that halt the key; 0 never does.
     pub halt_after_unknown: u32,
+    /// `ComputeBudget` and Transfer bounds.
+    pub limits: Limits,
 }
 
 pub struct Config {
@@ -270,6 +276,15 @@ impl Config {
                 rate_limit_per_minute: k.rate_limit_per_minute.unwrap_or(DEFAULT_RATE_PER_MINUTE),
                 daily_lamport_cap: k.daily_lamport_cap.unwrap_or(DEFAULT_DAILY_LAMPORT_CAP),
                 halt_after_unknown: k.halt_after_unknown.unwrap_or(DEFAULT_HALT_AFTER_UNKNOWN),
+                limits: Limits {
+                    max_compute_units: k
+                        .max_compute_units
+                        .unwrap_or(Limits::DEFAULT.max_compute_units),
+                    max_compute_unit_price: k
+                        .max_compute_unit_price
+                        .unwrap_or(Limits::DEFAULT.max_compute_unit_price),
+                    transfer_max_lamports: k.transfer_max_lamports,
+                },
                 name,
             });
         }
@@ -329,7 +344,7 @@ impl Config {
         for k in &self.keys {
             let _ = write!(
                 s,
-                "\n[keys.{}]\n  pubkey:         {}\n  class:          {}\n  approval:       {}\n  key file:       {}\n  profile:        {}\n  rate limit:     {} per minute\n  daily cap:      {} lamports ({} ZINK)\n  halt after:     {}\n  transfer_to:    {}\n  extra_programs: {}\n",
+                "\n[keys.{}]\n  pubkey:         {}\n  class:          {}\n  approval:       {}\n  key file:       {}\n  profile:        {}\n  rate limit:     {} per minute\n  daily cap:      {} lamports ({} ZINK)\n  halt after:     {}\n  compute units:  at most {}, price at most {} micro-lamports\n  transfer max:   {}\n  transfer_to:    {}\n  extra_programs: {}\n",
                 k.name,
                 k.pubkey,
                 k.class.as_str(),
@@ -348,6 +363,12 @@ impl Config {
                 } else {
                     format!("{} consecutive unknown outcomes", k.halt_after_unknown)
                 },
+                k.limits.max_compute_units,
+                k.limits.max_compute_unit_price,
+                k.limits.transfer_max_lamports.map_or_else(
+                    || "-".to_owned(),
+                    |m| format!("{m} lamports per transaction")
+                ),
                 list(&k.transfer_to),
                 list(&k.extra_programs),
             );
@@ -558,6 +579,23 @@ mod tests {
     }
 
     #[test]
+    fn compute_budget_and_transfer_bounds_are_per_key() {
+        let c = parse(&format!(
+            "[keys.s]\nclass = \"session\"\npubkey = \"{KEY}\"\nmax_compute_units = 200000\nmax_compute_unit_price = 5\ntransfer_max_lamports = 1000\n[keys.d]\nclass = \"session\"\npubkey = \"{KEY}\"\n"
+        ))
+        .unwrap();
+        assert_eq!(
+            c.key("s").unwrap().limits,
+            Limits {
+                max_compute_units: 200_000,
+                max_compute_unit_price: 5,
+                transfer_max_lamports: Some(1_000),
+            }
+        );
+        assert_eq!(c.key("d").unwrap().limits, Limits::DEFAULT);
+    }
+
+    #[test]
     fn the_example_loads_with_no_keys() {
         let c = parse(EXAMPLE).unwrap();
         assert!(c.keys.is_empty());
@@ -598,6 +636,8 @@ mod tests {
             "rate limit:     30 per minute",
             "daily cap:      50000000 lamports (0.05 ZINK)",
             "halt after:     3 consecutive unknown outcomes",
+            "compute units:  at most 1400000, price at most 0 micro-lamports",
+            "transfer max:   -",
             "listen:         127.0.0.1:8790",
             "token:          agent (keys: s)",
         ] {

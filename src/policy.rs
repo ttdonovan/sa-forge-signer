@@ -32,6 +32,7 @@ impl KeyPolicy<'_> {
             allowed_programs: self.allowed_programs,
             transfer_to: self.key.transfer_to.as_slice(),
             partial_signers: request.partial_signers,
+            limits: self.key.limits,
         }
     }
 }
@@ -385,6 +386,7 @@ mod tests {
                 rate_limit_per_minute: 2,
                 daily_lamport_cap: 1_000,
                 halt_after_unknown: 3,
+                limits: checks::Limits::DEFAULT,
             },
             fee_payer: addr(1),
             instructions: vec![game_ix(), ata_create(addr(7))],
@@ -406,6 +408,7 @@ mod tests {
         let message = Message::new(&case.instructions, Some(&case.fee_payer));
         let allowed = [
             program(SYSTEM_PROGRAM),
+            program(crate::cluster::COMPUTE_BUDGET_PROGRAM),
             program(ASSOCIATED_TOKEN_PROGRAM),
             program(TOKEN_PROGRAM),
             addr(9),
@@ -442,6 +445,7 @@ mod tests {
                 "fee_payer",
                 "programs",
                 "tokens",
+                "compute_budget",
                 "system",
                 "signers",
                 "new_accounts",
@@ -581,6 +585,36 @@ mod tests {
                 |c| c.instructions[1].accounts.truncate(5),
                 BEFORE,
                 "tokens",
+            ),
+            (
+                "priority fee",
+                |c| {
+                    c.instructions.push(Instruction {
+                        program_id: program(crate::cluster::COMPUTE_BUDGET_PROGRAM),
+                        accounts: vec![],
+                        data: vec![3, 1, 0, 0, 0, 0, 0, 0, 0],
+                    });
+                },
+                BEFORE,
+                "compute_budget",
+            ),
+            (
+                "transfers over the maximum",
+                |c| {
+                    c.key.limits.transfer_max_lamports = Some(9);
+                    let mut data = 2_u32.to_le_bytes().to_vec();
+                    data.extend_from_slice(&10_u64.to_le_bytes());
+                    c.instructions.push(Instruction {
+                        program_id: program(SYSTEM_PROGRAM),
+                        accounts: vec![
+                            AccountMeta::new(addr(1), true),
+                            AccountMeta::new(addr(3), false),
+                        ],
+                        data,
+                    });
+                },
+                BEFORE,
+                "system",
             ),
             (
                 "rate limit",

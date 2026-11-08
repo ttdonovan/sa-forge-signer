@@ -7,7 +7,10 @@ use solana_address::Address;
 use solana_message::Message;
 use solana_message::compiled_instruction::CompiledInstruction;
 
-use crate::cluster::{ASSOCIATED_TOKEN_PROGRAM, SYSTEM_PROGRAM, TOKEN_2022_PROGRAM, TOKEN_PROGRAM};
+use crate::cluster::{
+    ASSOCIATED_TOKEN_PROGRAM, COMPUTE_BUDGET_PROGRAM, SYSTEM_PROGRAM, TOKEN_2022_PROGRAM,
+    TOKEN_PROGRAM,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Refusal {
@@ -30,6 +33,26 @@ pub struct Policy<'a> {
     pub allowed_programs: &'a [Address],
     pub transfer_to: &'a [Address],
     pub partial_signers: &'a [Address],
+    pub limits: Limits,
+}
+
+/// A key's bounds on `ComputeBudget` and System instructions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Limits {
+    pub max_compute_units: u32,
+    /// Micro-lamports per compute unit; 0 refuses any priority fee.
+    pub max_compute_unit_price: u64,
+    /// The sum of all System Transfers in one transaction; `None` is unbounded but the daily cap.
+    pub transfer_max_lamports: Option<u64>,
+}
+
+impl Limits {
+    /// The runtime's maximum compute units, no priority fee, no transfer maximum.
+    pub const DEFAULT: Self = Self {
+        max_compute_units: 1_400_000,
+        max_compute_unit_price: 0,
+        transfer_max_lamports: None,
+    };
 }
 
 // Public System Program instruction index. Only Transfer is allowed at the top level: forge-mcp
@@ -37,6 +60,11 @@ pub struct Policy<'a> {
 // every account-creating form (CreateAccount, CreateAccountWithSeed, Assign, Allocate) can fund or
 // take over an account whose keypair the requester holds, moving lamports outside the signer.
 const SYS_TRANSFER: u32 = 2;
+
+// Public ComputeBudget instruction tags: SetComputeUnitLimit(u32) and SetComputeUnitPrice(u64).
+// The others (the deprecated 0, RequestHeapFrame, SetLoadedAccountsDataSizeLimit) are refused.
+const CB_UNIT_LIMIT: u8 = 2;
+const CB_UNIT_PRICE: u8 = 3;
 
 // Associated Token Account program instructions that only create an account (rent from the fee
 // payer, owned by the token program). RecoverNested (2) moves tokens and is refused.
@@ -49,11 +77,12 @@ const ATA_TOKEN_PROGRAM: usize = 5;
 const ATA_ACCOUNTS: usize = 6;
 
 /// Every check that needs only the message, by name, in order.
-pub fn each(message: &Message, policy: &Policy<'_>) -> [(&'static str, Result<(), Refusal>); 5] {
+pub fn each(message: &Message, policy: &Policy<'_>) -> [(&'static str, Result<(), Refusal>); 6] {
     [
         ("fee_payer", fee_payer(message, policy)),
         ("programs", programs(message, policy)),
         ("tokens", tokens(message)),
+        ("compute_budget", compute_budget(message, policy)),
         ("system", system(message, policy)),
         ("signers", signers(message, policy)),
     ]
@@ -175,8 +204,83 @@ pub fn ata_owners(message: &Message, policy: &Policy<'_>) -> Result<Vec<Address>
     Ok(out)
 }
 
+/// `ComputeBudget` passes on program id alone otherwise, so one payload could spend the whole daily
+/// cap as a priority fee. Only a bounded unit limit and price, each at most once, no accounts.
+fn compute_budget(message: &Message, policy: &Policy<'_>) -> Result<(), Refusal> {
+    let cb = Address::from_str(COMPUTE_BUDGET_PROGRAM)
+        .map_err(|e| refuse("compute_budget", e.to_string()))?;
+    let limits = policy.limits;
+    let (mut limit_seen, mut price_seen) = (false, false);
+    let no =
+        |i: usize, why: String| Err(refuse("compute_budget", format!("instruction {i} {why}")));
+    for (i, ix) in message.instructions.iter().enumerate() {
+        if program_of(message, ix) != Some(&cb) {
+            continue;
+        }
+        if !ix.accounts.is_empty() {
+            return no(i, "is a ComputeBudget instruction with accounts".to_owned());
+        }
+        let tag = ix.data.first().copied();
+        let value = ix.data.get(1..);
+        match (tag, value.and_then(|v| <[u8; 4]>::try_from(v).ok())) {
+            (Some(CB_UNIT_LIMIT), Some(b)) => {
+                let units = u32::from_le_bytes(b);
+                if limit_seen {
+                    return no(i, "sets the compute unit limit a second time".to_owned());
+                }
+                if units > limits.max_compute_units {
+                    return no(
+                        i,
+                        format!(
+                            "sets a compute unit limit of {units}, over this key's {}",
+                            limits.max_compute_units
+                        ),
+                    );
+                }
+                limit_seen = true;
+                continue;
+            }
+            (Some(CB_UNIT_LIMIT), None) => {
+                return no(i, "is a SetComputeUnitLimit of the wrong length".to_owned());
+            }
+            _ => {}
+        }
+        match (tag, value.and_then(|v| <[u8; 8]>::try_from(v).ok())) {
+            (Some(CB_UNIT_PRICE), Some(b)) => {
+                let price = u64::from_le_bytes(b);
+                if price_seen {
+                    return no(i, "sets the compute unit price a second time".to_owned());
+                }
+                if price > limits.max_compute_unit_price {
+                    return no(
+                        i,
+                        format!(
+                            "sets a compute unit price of {price} micro-lamports, over this key's {}",
+                            limits.max_compute_unit_price
+                        ),
+                    );
+                }
+                price_seen = true;
+            }
+            (Some(CB_UNIT_PRICE), None) => {
+                return no(i, "is a SetComputeUnitPrice of the wrong length".to_owned());
+            }
+            _ => {
+                return no(
+                    i,
+                    format!(
+                        "is ComputeBudget instruction {tag:?}; only SetComputeUnitLimit and SetComputeUnitPrice are allowed"
+                    ),
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 fn system(message: &Message, policy: &Policy<'_>) -> Result<(), Refusal> {
     let system = Address::from_str(SYSTEM_PROGRAM).map_err(|e| refuse("system", e.to_string()))?;
+    let mut total: u64 = 0;
     for (i, ix) in message.instructions.iter().enumerate() {
         if program_of(message, ix) != Some(&system) {
             continue;
@@ -188,6 +292,27 @@ fn system(message: &Message, policy: &Policy<'_>) -> Result<(), Refusal> {
             .map(u32::from_le_bytes)
             .ok_or_else(|| refuse("system", format!("instruction {i} is too short")))?;
         let account = |n: usize| account_of(message, ix, n);
+        if tag == SYS_TRANSFER {
+            // Exactly the tag and the amount: anything else is not a Transfer this check can sum.
+            let lamports = ix
+                .data
+                .get(4..)
+                .and_then(|b| <[u8; 8]>::try_from(b).ok())
+                .map(u64::from_le_bytes)
+                .ok_or_else(|| {
+                    refuse(
+                        "system",
+                        format!("instruction {i} is a Transfer of the wrong length"),
+                    )
+                })?;
+            if account(0) != Some(policy.signer) {
+                return Err(refuse(
+                    "system",
+                    format!("instruction {i} transfers from an account other than the signing key"),
+                ));
+            }
+            total = total.saturating_add(lamports);
+        }
         match tag {
             SYS_TRANSFER => match account(1) {
                 Some(to) if policy.transfer_to.contains(to) => {}
@@ -213,6 +338,14 @@ fn system(message: &Message, policy: &Policy<'_>) -> Result<(), Refusal> {
                 ));
             }
         }
+    }
+    if let Some(max) = policy.limits.transfer_max_lamports
+        && total > max
+    {
+        return Err(refuse(
+            "system",
+            format!("the transfers total {total} lamports, over this key's {max} per transaction"),
+        ));
     }
     Ok(())
 }
@@ -292,6 +425,7 @@ mod tests {
                 allowed_programs: &allowed,
                 transfer_to: to,
                 partial_signers: partial,
+                limits: Limits::DEFAULT,
             },
         )
     }
@@ -399,6 +533,7 @@ mod tests {
                 allowed_programs: &allowed,
                 transfer_to: &[],
                 partial_signers: &[],
+                limits: Limits::DEFAULT,
             },
         )
     }
@@ -506,6 +641,7 @@ mod tests {
                 allowed_programs: &[],
                 transfer_to: to,
                 partial_signers: &[],
+                limits: Limits::DEFAULT,
             },
         )
     }
@@ -574,5 +710,154 @@ mod tests {
                 .check,
             "signers"
         );
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    use crate::cluster::COMPUTE_BUDGET_PROGRAM;
+    use solana_instruction::{AccountMeta, Instruction};
+
+    fn addr(n: u8) -> Address {
+        Address::new_from_array([n; 32])
+    }
+
+    fn cb(data: Vec<u8>) -> Instruction {
+        Instruction {
+            program_id: Address::from_str(COMPUTE_BUDGET_PROGRAM).unwrap(),
+            accounts: vec![],
+            data,
+        }
+    }
+
+    fn unit_limit(units: u32) -> Instruction {
+        let mut d = vec![2];
+        d.extend_from_slice(&units.to_le_bytes());
+        cb(d)
+    }
+
+    fn unit_price(micro_lamports: u64) -> Instruction {
+        let mut d = vec![3];
+        d.extend_from_slice(&micro_lamports.to_le_bytes());
+        cb(d)
+    }
+
+    fn transfer(from: Address, to: Address, lamports: u64) -> Instruction {
+        let mut data = 2_u32.to_le_bytes().to_vec();
+        data.extend_from_slice(&lamports.to_le_bytes());
+        Instruction {
+            program_id: Address::from_str(SYSTEM_PROGRAM).unwrap(),
+            accounts: vec![AccountMeta::new(from, true), AccountMeta::new(to, false)],
+            data,
+        }
+    }
+
+    const LIMITS: Limits = Limits {
+        max_compute_units: 1_400_000,
+        max_compute_unit_price: 10,
+        transfer_max_lamports: Some(100),
+    };
+
+    fn run_with(ixs: &[Instruction], limits: Limits, partial: &[Address]) -> Result<(), Refusal> {
+        let message = Message::new(ixs, Some(&addr(1)));
+        let allowed = [
+            Address::from_str(SYSTEM_PROGRAM).unwrap(),
+            Address::from_str(COMPUTE_BUDGET_PROGRAM).unwrap(),
+        ];
+        structural(
+            &message,
+            &Policy {
+                signer: &addr(1),
+                allowed_programs: &allowed,
+                transfer_to: &[addr(3)],
+                partial_signers: partial,
+                limits,
+            },
+        )
+        .map(|_| ())
+    }
+
+    fn check(ixs: &[Instruction]) -> Option<&'static str> {
+        run_with(ixs, LIMITS, &[]).err().map(|r| r.check)
+    }
+
+    #[test]
+    fn compute_budget_allows_only_a_bounded_unit_limit_and_price() {
+        assert_eq!(check(&[unit_limit(1_400_000), unit_price(10)]), None);
+        assert_eq!(check(&[unit_limit(1_400_001)]), Some("compute_budget"));
+        assert_eq!(check(&[unit_price(11)]), Some("compute_budget"));
+        let mut price_zero = LIMITS;
+        price_zero.max_compute_unit_price = 0;
+        assert_eq!(
+            run_with(&[unit_price(1)], price_zero, &[])
+                .unwrap_err()
+                .check,
+            "compute_budget",
+            "the default price ceiling refuses any priority fee"
+        );
+        assert!(run_with(&[unit_price(0)], price_zero, &[]).is_ok());
+    }
+
+    #[test]
+    fn compute_budget_refuses_other_forms_lengths_accounts_and_repeats() {
+        let heap = {
+            let mut d = vec![1];
+            d.extend_from_slice(&(64 * 1024_u32).to_le_bytes());
+            cb(d)
+        };
+        let loaded = {
+            let mut d = vec![4];
+            d.extend_from_slice(&1_u32.to_le_bytes());
+            cb(d)
+        };
+        for (what, ix) in [
+            ("RequestHeapFrame", heap),
+            ("SetLoadedAccountsDataSizeLimit", loaded),
+            ("deprecated 0", cb(vec![0, 0, 0, 0, 0, 0, 0, 0, 0])),
+            ("empty", cb(vec![])),
+            ("limit too short", cb(vec![2, 0, 0, 0])),
+            ("limit too long", cb(vec![2, 0, 0, 0, 0, 0])),
+            ("price too short", cb(vec![3, 0, 0, 0, 0])),
+        ] {
+            assert_eq!(check(&[ix]), Some("compute_budget"), "{what}");
+        }
+        let mut with_account = unit_limit(1);
+        with_account.accounts = vec![AccountMeta::new_readonly(addr(5), false)];
+        assert_eq!(check(&[with_account]), Some("compute_budget"));
+        assert_eq!(
+            check(&[unit_limit(1), unit_limit(2)]),
+            Some("compute_budget"),
+            "two limits in one message"
+        );
+        assert_eq!(
+            check(&[unit_price(1), unit_price(1)]),
+            Some("compute_budget")
+        );
+    }
+
+    #[test]
+    fn transfers_are_summed_against_the_per_transaction_maximum() {
+        assert_eq!(check(&[transfer(addr(1), addr(3), 100)]), None);
+        assert_eq!(
+            check(&[
+                transfer(addr(1), addr(3), 60),
+                transfer(addr(1), addr(3), 41)
+            ]),
+            Some("system"),
+            "summed across instructions"
+        );
+        let mut unlimited = LIMITS;
+        unlimited.transfer_max_lamports = None;
+        assert!(run_with(&[transfer(addr(1), addr(3), u64::MAX)], unlimited, &[]).is_ok());
+        let mut short = transfer(addr(1), addr(3), 1);
+        short.data.truncate(8);
+        assert_eq!(check(&[short]), Some("system"));
+    }
+
+    #[test]
+    fn a_transfer_must_come_from_the_signing_key() {
+        let r = run_with(&[transfer(addr(4), addr(3), 1)], LIMITS, &[addr(4)]).unwrap_err();
+        assert_eq!(r.check, "system", "{r}");
     }
 }

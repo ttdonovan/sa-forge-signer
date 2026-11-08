@@ -124,6 +124,8 @@ flowchart TD
 
 **Threat:** ComputeBudget instructions pass on program id alone, so a payload can carry `SetComputeUnitPrice` at any price, `RequestHeapFrame`, or a loaded-accounts limit. The cap gate counts the fee, so the loss is bounded by the daily cap, but one payload can spend all of it as a priority fee. Transfers go only to allowed destinations, but in any amount up to the cap.
 
+**Status: built,** as below, with one addition: a System `Transfer` must be exactly its tag and amount (12 bytes), so the amount summed is the amount the runtime moves. Refusing priced payloads, other ComputeBudget forms and transfers from partial signers shipped as a breaking change.
+
 **Change:**
 
 - ComputeBudget: allow only `SetComputeUnitLimit` up to `max_compute_units` (default 1,400,000, the runtime's maximum) and `SetComputeUnitPrice` up to `max_compute_unit_price` (micro-lamports, default 0, so refused), each at most once, with no accounts and exact data lengths. Refuse every other ComputeBudget instruction (`compute_budget`). forge-mcp's builders emit only `SetComputeUnitLimit`, so its payloads keep passing.

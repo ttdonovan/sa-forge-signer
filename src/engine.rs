@@ -928,6 +928,7 @@ mod tests {
             rate_limit_per_minute: 2,
             daily_lamport_cap: 1_000,
             halt_after_unknown: 3,
+            limits: crate::checks::Limits::DEFAULT,
         }
     }
 
