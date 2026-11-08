@@ -4,7 +4,7 @@ description: "sa-forge-signer-idl-table: generates the signer's instruction tabl
 
 # IDL table
 
-`sa-forge-signer-idl-table` turns the programs' Codama IDLs into the instruction table that [hardening proposal 4](../dev/hardening.md#4-instruction-table-profile-key-index-and-paying-slots) checks payloads against. It writes only facts about each instruction, plus each IDL's sha256 and where the IDLs came from, so the IDLs are never checked in here. The IDLs of these programs are not published on Z.ink testnet (no Anchor IDL account, and no Program Metadata program); today they come from a sage-forge checkout.
+`sa-forge-signer-idl-table` turns the programs' Codama IDLs into the instruction table that [hardening proposal 4](../dev/hardening.md#4-instruction-table-profile-and-paying-slots) checks payloads against. It writes only facts about each instruction, plus each IDL's sha256 and where the IDLs came from, so the IDLs are never checked in here. The IDLs of these programs are not published on Z.ink testnet (no Anchor IDL account, and no Program Metadata program); today they come from a sage-forge checkout.
 
 ```sh
 just apps idl-table --cluster zink-testnet --from "sage-forge <commit> hearth/generate-sdks/idls" \
