@@ -12,5 +12,6 @@ None of them holds keys or signs with the signer's keys. The grant page has the 
 |---|---|
 | [Console](console.md) | A read-only desktop view of a running signer: `serve` health, the audit log and per-key limits |
 | [Grant page](grant.md) | A local web page where the profile wallet grants and revokes a session key (Path B) |
+| [IDL table](idl-table.md) | Generates the signer's instruction table from the programs' IDLs, without copying them |
 
 Install an app from a release tag by naming its package (`cargo install --locked --git https://github.com/ttdonovan/sa-forge-signer --tag vX.Y.Z <package>`), or from a checkout with `cargo install --locked --path apps/<app>`.

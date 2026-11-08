@@ -30,6 +30,7 @@
 - [Apps](apps/README.md)
   - [Console](apps/console.md)
   - [Grant page](apps/grant.md)
+  - [IDL table](apps/idl-table.md)
 
 # Appendix
 
