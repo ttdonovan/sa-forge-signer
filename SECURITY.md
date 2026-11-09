@@ -8,6 +8,7 @@
 | A buggy or malicious payload (from the builder, a hand-written file or a prompt injection) | The [structural checks](https://ttdonovan.github.io/sa-forge-signer/how-it-works.html), simulation before sending, `confirm` for `wallet` keys, then the on-chain key limits. |
 | A wrong or swapped RPC URL | The RPC's genesis hash must match the cluster profile. |
 | Private keys inside payloads (`partial_signers`) | Never logged; the audit log hashes the payload without them; the payload file is deleted once sent. |
+| Secrets in logs | Tracing is off unless `SA_FORGE_SIGNER_LOG` is set, and its spans carry key names, payload hashes, RPC method names, counts and outcomes only: never key material, partial signers, tokens or their hashes, the RPC URL, or caller-supplied text. |
 | Approval spoofed by the agent | `confirm` reads only from the controlling terminal (`/dev/tty`), never stdin. Without a terminal it refuses. This holds only while nothing the agent runs can type into that terminal (see Not covered). |
 | A stolen session key | On-chain scope, narrow permission mask, short expiry and a small ZINK balance. These hold even if the signer host is compromised. |
 | A stolen wallet key (Path A) | Nothing on-chain limits it. Keep only working balances in it. |

@@ -88,6 +88,8 @@ impl Rpc {
     }
 
     fn call(&self, method: &str, params: &Value) -> Result<Value> {
+        // The method only: the URL may hold an API key.
+        let _span = tracing::debug_span!("rpc", method).entered();
         let body = json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
         let mut resp = self
             .agent

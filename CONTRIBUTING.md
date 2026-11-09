@@ -9,7 +9,7 @@
 
 ## Workflow
 
-Run `just` to list recipes. Before opening a pull request, run `just check` (the same gate as CI: fmt, clippy with warnings as errors, tests, shellcheck, advisories, dependency age), and `just docs check` if a doc changed. Keep `PLAN.md` in step with the work it tracks.
+Run `just` to list recipes. Before opening a pull request, run `just check` (the same gate as CI: fmt, clippy with warnings as errors, tests, shellcheck, advisories, dependency age), and `just docs check` if a doc changed. Keep `PLAN.md` in step with the work it tracks. For a change that may affect speed, run `just bench` (timings of the audit log's reads on synthetic logs) before and after, and set `SA_FORGE_SIGNER_LOG=info` (see Configuration) to see where a real sign spends its time.
 
 ## Code style
 

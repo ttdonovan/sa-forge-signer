@@ -43,6 +43,8 @@ One binary crate; each module's `//!` comment is the authority if this page drif
 | `audit.rs` | The append-only, hash-chained JSONL audit log, read back from the end for the checks (`recent`, `walk_back`), and the per-key signing lock |
 | `halt.rs` | Halts under `state_dir/halts/`: setting one, `resume` at the terminal, and the `halt_after_unknown` trip |
 | `policy_approval.rs` | Policy approvals under `state_dir/policy/`: `key approve` at the terminal, and the `policy` refusal |
+| `trace.rs` | Opt-in tracing on stderr from `SA_FORGE_SIGNER_LOG`: the subscriber, and what spans may never carry |
+| `bench.rs` | Test-only: `just bench`, timings of the audit log's reads on synthetic logs |
 | `serve.rs` | `serve`: JSON over HTTP at `/v1/check`, `/v1/sign` and `/v1/halt`, MCP at `/mcp`, bearer-token auth |
 
 Checks and gates: `just check` runs `scripts/ci/check.sh` (fmt, clippy, tests, shellcheck, advisories, dependency age), the same gate as CI.

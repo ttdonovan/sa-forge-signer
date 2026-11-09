@@ -211,6 +211,7 @@ impl Audit {
 
     /// Appends under an exclusive file lock, chaining to the last entry.
     pub fn append(&self, mut entry: Entry) -> Result<Entry> {
+        let _span = tracing::info_span!("audit_append", command = %entry.command).entered();
         if let Some(dir) = self.path.parent() {
             std::fs::DirBuilder::new()
                 .recursive(true)

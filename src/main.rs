@@ -1,6 +1,8 @@
 //! sa-forge-signer: a thin, self-hosted signer for agents playing SAGE C4 on Z.ink. Unofficial.
 
 mod audit;
+#[cfg(test)]
+mod bench;
 mod checks;
 mod cluster;
 mod config;
@@ -16,6 +18,7 @@ mod rpc;
 mod serve;
 #[cfg(test)]
 mod testrpc;
+mod trace;
 mod transfer;
 
 use std::path::PathBuf;
@@ -177,6 +180,7 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<ExitCode> {
+    trace::init()?;
     let path = match cli.config {
         Some(p) => p,
         None => config::default_path()?,

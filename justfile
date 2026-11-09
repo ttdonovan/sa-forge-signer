@@ -9,6 +9,11 @@ default:
 check:
     @scripts/ci/check.sh
 
+# Time the audit log's reads on synthetic logs (release build; writes temporary files, prints a table)
+[group('verify')]
+bench:
+    cargo test --release --locked bench:: -- --ignored --nocapture --test-threads 1
+
 # Release build
 [group('build')]
 build:

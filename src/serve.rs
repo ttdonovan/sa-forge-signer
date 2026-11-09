@@ -123,7 +123,16 @@ fn handle(cfg: &Config, mut request: Request) {
         .unwrap_or_default()
         .to_owned();
     let method = request.method().clone();
+    let span = tracing::info_span!(
+        "request",
+        method = %method,
+        path = %path,
+        token = tracing::field::Empty,
+        status = tracing::field::Empty
+    )
+    .entered();
     let (r, log) = route(cfg, &mut request, &method, &path);
+    span.record("status", r.status);
     eprintln!("{method} {path} -> {} {log}", r.status);
     let text = r.body.map(|b| b.to_string()).unwrap_or_default();
     let mut response = Response::from_string(text).with_status_code(r.status);
@@ -150,6 +159,7 @@ fn route(cfg: &Config, request: &mut Request, method: &Method, path: &str) -> (R
             String::new(),
         );
     };
+    tracing::Span::current().record("token", token.name.as_str());
     let note = format!("token={}", token.name);
     if method != &Method::Post {
         return (reply(405, json!({"error": "use POST"})), note);

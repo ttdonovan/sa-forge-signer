@@ -167,11 +167,18 @@ pub fn execute(
         None => cfg.key_for_pubkey(&payload.fee_payer)?,
     };
     let signing = matches!(mode, Mode::Sign { .. });
+    let span = if signing {
+        tracing::info_span!("sign", key = %key.name, payload = %payload.hash)
+    } else {
+        tracing::info_span!("check", key = %key.name, payload = %payload.hash)
+    };
+    let _span = span.entered();
     let authorized = allowed.is_none_or(|keys| keys.contains(&key.name));
     // Held until this function returns, after the final audit entry: no other sign with this key,
     // in this process or another, can pass the limit check in between. Not taken for a token that
     // may not use the key, so it cannot queue behind (or hold up) that key's signs.
     let _lock = if signing && authorized {
+        let _wait = tracing::info_span!("key_lock").entered();
         Some(KeyLock::acquire(&cfg.state_dir, &key.name)?)
     } else {
         None
@@ -221,6 +228,14 @@ pub fn execute(
             after_unknown(cfg, key, &mut report);
         }
     }
+    tracing::info!(
+        outcome = serde_json::to_value(report.outcome)?
+            .as_str()
+            .unwrap_or_default(),
+        failed_check = report.failed_check,
+        sent,
+        "done"
+    );
     Ok((report, sent, !payload.partial_signers.is_empty()))
 }
 
@@ -267,7 +282,10 @@ struct Gate<'a> {
 impl<'a> Gate<'a> {
     fn new(cfg: &'a Config, key: &'a KeyConfig, payload: &Payload) -> Result<Self> {
         let now = now();
+        let read = tracing::info_span!("audit_read", entries = tracing::field::Empty).entered();
         let mut entries = Audit::new(&cfg.state_dir).recent(now)?;
+        read.record("entries", entries.len());
+        drop(read);
         entries.retain(|e| e.key == key.name);
         Ok(Self {
             key,
@@ -518,6 +536,7 @@ fn send_and_confirm(
     poll: Duration,
     deadline: Duration,
 ) -> Result<Report> {
+    let _span = tracing::info_span!("confirm").entered();
     let started = std::time::Instant::now();
     let wire = encode(tx)?;
     let signature = tx
@@ -695,7 +714,11 @@ fn approved_fresh(
     mut r: Report,
 ) -> Result<std::result::Result<(Transaction, u64, Report), Report>> {
     let (tx, last_valid) = if key.approval == Approval::Confirm {
-        if !confirm(&r, key)? {
+        let approved = {
+            let _wait = tracing::info_span!("approval").entered();
+            confirm(&r, key)?
+        };
+        if !approved {
             return Ok(Err(
                 r.refused(&refusal("approval", "not approved".to_owned()))
             ));
@@ -2156,6 +2179,51 @@ mod tests {
         let r = execute(&home.cfg, None, &payload, &sign, None).unwrap().0;
         assert_eq!(r.outcome, Outcome::Confirmed, "{r:?}");
         assert!(halt::trip_after_unknown(&home.cfg.state_dir, "k", 1, now()).is_ok());
+    }
+
+    #[test]
+    fn a_sign_traces_each_phase_and_no_caller_text() {
+        let home = crate::testrpc::Home::new("trace", "");
+        let payload = act(&home, ACT, &home.pubkey).replace("\"act\"", "\"SECRET-SUMMARY\"");
+        let (r, text) = crate::trace::tests::capture(|| {
+            let sign = Mode::Sign {
+                intent: Some("SECRET-INTENT".into()),
+            };
+            execute(&home.cfg, None, &payload, &sign, None).unwrap().0
+        });
+        assert_eq!(r.outcome, Outcome::Confirmed);
+        let lines: Vec<serde_json::Value> = text
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        let closed = |name: &str| {
+            lines
+                .iter()
+                .any(|l| l["span"]["name"] == name && l["fields"]["message"] == "close")
+        };
+        for name in [
+            "sign",
+            "key_lock",
+            "audit_read",
+            "rpc",
+            "audit_append",
+            "confirm",
+        ] {
+            assert!(closed(name), "no closed {name} span in\n{text}");
+        }
+        assert!(
+            lines
+                .iter()
+                .any(|l| l["span"]["method"] == "simulateTransaction"),
+            "each RPC call names its method"
+        );
+        assert!(
+            lines.iter().any(|l| l["fields"]["outcome"] == "confirmed"),
+            "the outcome is logged"
+        );
+        for secret in ["SECRET-SUMMARY", "SECRET-INTENT", "127.0.0.1"] {
+            assert!(!text.contains(secret), "{secret} leaked into\n{text}");
+        }
     }
 
     #[test]

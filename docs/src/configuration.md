@@ -1,5 +1,5 @@
 ---
-description: "config init and config show, and the annotated example config: cluster, RPC, key and state directories, per-key class, approval, limits and transfer destinations, and serve tokens"
+description: "config init and config show, and the annotated example config: cluster, RPC, key and state directories, per-key class, approval, limits and transfer destinations, serve tokens, and tracing"
 ---
 
 # Configuration
@@ -43,3 +43,20 @@ The example, as `config init` writes it:
 ```toml
 {{#include ../../config.example.toml}}
 ```
+
+## Tracing
+
+Tracing is off by default. Set `SA_FORGE_SIGNER_LOG` to `error`, `warn`, `info`, `debug` or `trace` to write spans and events to stderr (stdout still carries only the JSON report), and `SA_FORGE_SIGNER_LOG_FORMAT=json` for one JSON object per line instead of the compact text format. An unknown value stops the signer with an error rather than being ignored. Each span logs its duration (`time.busy`, `time.idle`) when it closes:
+
+| Span | Level | What it times |
+|---|---|---|
+| `sign`, `check` | info | the whole request, with the key name and payload hash; ends with a `done` event carrying `outcome`, `failed_check` and `sent` |
+| `key_lock` | info | waiting for the key's signing lock |
+| `audit_read` | info | reading the key's recent audit entries, with how many were read |
+| `approval` | info | waiting for a person at the terminal (`confirm` keys) |
+| `confirm` | info | sending and polling until the outcome is known |
+| `audit_append` | info | writing one audit entry, with its command |
+| `rpc` | debug | each RPC call, with its method name |
+| `request` | info | each `serve` request, with the method, path, status and token name |
+
+Spans never carry key material, partial signers, tokens or their hashes, the RPC URL (it may hold an API key), or caller-supplied text (`summary`, `intent`).
