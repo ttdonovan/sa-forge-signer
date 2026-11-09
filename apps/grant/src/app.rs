@@ -10,7 +10,7 @@ use crate::bridge::{self, iso_time, now_secs};
 use crate::perms::{self, DRAIN_SOL_VAULT, PRESETS, SAGE};
 use crate::profile::{
     self, ADD_KEYS, Grant, Profile, REMOVE_KEYS, SAGE_PROGRAM, add_keys, authority_index,
-    decode_profile, remove_keys,
+    decode_profile, key_at, remove_keys,
 };
 use crate::rpc::{self, DEFAULT_RPC, EXPLORER};
 use crate::tx::{
@@ -39,9 +39,17 @@ struct Pending {
     /// The RPC it was reviewed against, after a genesis check.
     rpc_url: String,
     ix: Instruction,
-    /// The key a grant adds, to report its index once it lands.
-    granted: Option<Pubkey>,
+    change: Change,
     logs: Vec<String>,
+}
+
+/// What a reviewed transaction changes, to check before signing and report after it lands.
+#[derive(Clone, Copy)]
+enum Change {
+    /// The key a grant adds, to report its index.
+    Grant(Pubkey),
+    /// The index a revoke removes, and the key it must still hold.
+    Revoke(u16, Pubkey),
 }
 
 #[derive(Clone, Copy)]
@@ -238,13 +246,13 @@ async fn prepare_grant(s: State) -> Result<(), String> {
         "Grant a session key",
         lines,
         ix,
-        Some(new_key),
+        Change::Grant(new_key),
         profile_addr,
     )
     .await
 }
 
-async fn prepare_revoke(s: State, index: u16) -> Result<(), String> {
+async fn prepare_revoke(s: State, index: u16, expected: Pubkey) -> Result<(), String> {
     s.pending.set(None);
     let wallet = s.wallet_key()?;
     let profile = load_profile(s).await?;
@@ -254,10 +262,7 @@ async fn prepare_revoke(s: State, index: u16) -> Result<(), String> {
             "key {index} is an auth key; this page does not remove those"
         ));
     }
-    let key = profile
-        .keys
-        .get(usize::from(index))
-        .ok_or("the profile changed; reload it")?;
+    let key = key_at(&profile, index, &expected)?;
     let scope = encode_pubkey(&key.scope);
     let profile_addr = s.profile_addr.get_untracked().trim().to_string();
     let ix = remove_keys(wallet, parse_pubkey(&profile_addr)?, auth, index)?;
@@ -275,7 +280,15 @@ async fn prepare_revoke(s: State, index: u16) -> Result<(), String> {
         ),
         "Keys after it may move down an index: re-check indexes the agent uses.".into(),
     ];
-    stage(s, "Revoke a key", lines, ix, None, profile_addr).await
+    stage(
+        s,
+        "Revoke a key",
+        lines,
+        ix,
+        Change::Revoke(index, expected),
+        profile_addr,
+    )
+    .await
 }
 
 /// Simulates the instruction and shows it for review.
@@ -284,7 +297,7 @@ async fn stage(
     title: &str,
     lines: Vec<String>,
     ix: Instruction,
-    granted: Option<Pubkey>,
+    change: Change,
     profile: String,
 ) -> Result<(), String> {
     let url = checked_url(s).await?;
@@ -303,7 +316,7 @@ async fn stage(
         profile,
         rpc_url: url,
         ix,
-        granted,
+        change,
         logs,
     }));
     Ok(())
@@ -319,6 +332,12 @@ async fn sign_and_send(s: State) -> Result<(), String> {
     if url != p.rpc_url {
         s.pending.set(None);
         return Err("the RPC URL changed since review; review again".into());
+    }
+    if let Change::Revoke(index, key) = p.change
+        && let Err(e) = key_at(&load_profile(s).await?, index, &key)
+    {
+        s.pending.set(None);
+        return Err(e);
     }
     let message = compile_message(
         p.payer,
@@ -341,15 +360,27 @@ async fn sign_and_send(s: State) -> Result<(), String> {
     rpc::confirm(&url, &signature).await?;
     let profile = load_profile(s).await?;
     s.say(Line::Info(format!("{} confirmed", p.title)));
-    if let Some(key) = p.granted
-        && let Some(i) = profile.keys.iter().position(|k| k.key == key)
-    {
-        s.say(Line::Info(format!(
-            "{} is profile key {i}: tell the agent to pass keyIndex {i} to forge-mcp's build_* methods \
-             (the signer config has no index; its optional profile = \"{}\" is informational)",
-            encode_pubkey(&key),
-            p.profile
-        )));
+    match p.change {
+        Change::Grant(key) => {
+            if let Some(i) = profile.keys.iter().position(|k| k.key == key) {
+                s.say(Line::Info(format!(
+                    "{} is profile key {i}: tell the agent to pass keyIndex {i} to forge-mcp's build_* methods \
+                     (the signer config has no index; its optional profile = \"{}\" is informational)",
+                    encode_pubkey(&key),
+                    p.profile
+                )));
+            }
+        }
+        Change::Revoke(_, key) => match profile.keys.iter().position(|k| k.key == key) {
+            None => s.say(Line::Info(format!(
+                "{} is no longer on the profile",
+                encode_pubkey(&key)
+            ))),
+            Some(i) => s.say(Line::Error(format!(
+                "{} is still on the profile, as key {i}: check the transaction and revoke it again if needed",
+                encode_pubkey(&key)
+            ))),
+        },
     }
     Ok(())
 }
@@ -505,6 +536,7 @@ fn key_table(s: State, p: &Profile) -> impl IntoView + use<> {
                 t => iso_time(t),
             };
             let removable = i >= auth_count;
+            let key = k.key;
             view! {
                 <tr class:expired=k.expired(now)>
                     <td>{i}</td>
@@ -517,7 +549,7 @@ fn key_table(s: State, p: &Profile) -> impl IntoView + use<> {
                             <button
                                 class="danger"
                                 disabled=move || s.busy.get() || s.wallet.get().is_none()
-                                on:click=move |_| s.run(prepare_revoke(s, i))
+                                on:click=move |_| s.run(prepare_revoke(s, i, key))
                             >"Revoke"</button>
                         })}
                     </td>

@@ -40,7 +40,7 @@ The presets, by SAGE bit:
 
 ## Revoking
 
-**Revoke** on a key's row builds `RemoveKeys` for that one index, simulates it, and shows it for review in the same way. Auth keys cannot be revoked here. Removing a key may move every key after it down one index: the table is re-read after it confirms, so re-check the indexes the agent passes to forge-mcp. Then `sa-forge-signer key destroy` the key file ([Key lifecycle](../key-lifecycle.md)).
+**Revoke** on a key's row builds `RemoveKeys` for that one index, simulates it, and shows it for review in the same way. `RemoveKeys` names only an index, so the page also keeps the pubkey of the row you clicked: it refuses to review or sign if the profile, re-read at each step, now holds another key at that index, and after the transaction confirms it says whether that key is gone. Auth keys cannot be revoked here. Removing a key may move every key after it down one index: the table is re-read after it confirms, so re-check the indexes the agent passes to forge-mcp. Then `sa-forge-signer key destroy` the key file ([Key lifecycle](../key-lifecycle.md)).
 
 ## What it checks
 
