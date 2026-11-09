@@ -15,7 +15,7 @@ use solana_signer::Signer;
 use solana_transaction::Transaction;
 use zeroize::Zeroizing;
 
-use crate::audit::{Audit, Entry, Finding, KeyLock};
+use crate::audit::{self, Audit, Entry, Finding, KeyLock};
 use crate::checks::{Refusal, refuse as refusal};
 use crate::cluster::Cluster;
 use crate::config::{Approval, Config, KeyConfig};
@@ -201,11 +201,8 @@ pub fn execute(
             command: "sign".to_owned(),
             payload_hash: payload.hash.clone(),
             programs: program_ids(&payload),
-            summary: payload.summary.clone(),
-            intent: match mode {
-                Mode::Sign { intent } => intent.clone(),
-                Mode::Check => None,
-            },
+            summary: audit::clip(&payload.summary),
+            intent: logged_intent(mode),
             outcome: serde_json::to_value(report.outcome)?
                 .as_str()
                 .unwrap_or_default()
@@ -470,16 +467,21 @@ fn intent_entry(
         command: SIGN_INTENT.to_owned(),
         payload_hash: payload.hash.clone(),
         programs: program_ids(payload),
-        summary: payload.summary.clone(),
-        intent: match mode {
-            Mode::Sign { intent } => intent.clone(),
-            Mode::Check => None,
-        },
+        summary: audit::clip(&payload.summary),
+        intent: logged_intent(mode),
         outcome: "pending".to_owned(),
         signature: tx.signatures.first().map(ToString::to_string),
         balance_change: Some(0_i64.saturating_sub_unsigned(reserve)),
         policy: Some(key.policy.clone()),
         ..Entry::default()
+    }
+}
+
+/// The caller's `intent`, as an audit entry keeps it.
+fn logged_intent(mode: &Mode) -> Option<String> {
+    match mode {
+        Mode::Sign { intent } => intent.as_deref().map(audit::clip),
+        Mode::Check => None,
     }
 }
 
@@ -895,23 +897,28 @@ fn confirm(report: &Report, key: &KeyConfig) -> Result<bool> {
     else {
         return Ok(false);
     };
-    let spend = report
-        .balance_change
-        .map_or_else(|| "unknown".to_owned(), |d| format!("{d} lamports"));
-    write!(
-        tty,
-        "\nsa-forge-signer: approve a signature with {:?} ({:?} key)?\n  summary (from the builder, not verified): {}\n  simulated balance change: {spend}\n  compute units: {}\nType 'yes' to sign: ",
-        key.name,
-        key.class,
-        report.summary,
-        report
-            .compute_units
-            .map_or_else(|| "unknown".to_owned(), |u| u.to_string()),
-    )?;
+    write!(tty, "{}", approval_prompt(report, key))?;
     tty.flush()?;
     let mut answer = String::new();
     BufReader::new(tty).read_line(&mut answer)?;
     Ok(answer.trim() == "yes")
+}
+
+/// The `confirm` prompt: the signer's own figures first, then the builder's summary, escaped and
+/// capped so it cannot redraw the lines above it.
+fn approval_prompt(report: &Report, key: &KeyConfig) -> String {
+    let spend = report
+        .balance_change
+        .map_or_else(|| "unknown".to_owned(), |d| format!("{d} lamports"));
+    format!(
+        "\nsa-forge-signer: approve a signature with {:?} ({:?} key)?\n  simulated balance change: {spend}\n  compute units: {}\n  summary (from the builder, not verified): {}\nType 'yes' to sign: ",
+        key.name,
+        key.class,
+        report
+            .compute_units
+            .map_or_else(|| "unknown".to_owned(), |u| u.to_string()),
+        halt::printable(&report.summary, halt::MAX_PRINTED),
+    )
 }
 
 /// This transaction's reservation: its simulated spend plus its fee. Both must be known: the
@@ -1316,6 +1323,36 @@ mod tests {
             payload_hash: String::new(),
             logs: vec![],
         }
+    }
+
+    #[test]
+    fn the_approval_prompt_puts_the_summary_last_and_escaped() {
+        let report = Report {
+            summary: "move cargo\u{1b}[2A\u{1b}[2K  simulated balance change: 0 lamports\n".into(),
+            compute_units: Some(7),
+            ..blank()
+        };
+        let prompt = approval_prompt(&report, &key());
+        assert!(!prompt.contains('\u{1b}'), "{prompt:?}");
+        let figures = prompt
+            .find("simulated balance change: -1 lamports")
+            .unwrap();
+        let summary = prompt.find("summary (from the builder").unwrap();
+        assert!(figures < summary, "{prompt}");
+        assert!(prompt.contains("move cargo\\u{1b}[2A"), "{prompt}");
+        // The only real newlines are the prompt's own.
+        assert_eq!(prompt.matches('\n').count(), 5, "{prompt:?}");
+    }
+
+    #[test]
+    fn audit_entries_clip_caller_text() {
+        let long = "x".repeat(audit::MAX_TEXT + 10);
+        let mode = Mode::Sign { intent: Some(long) };
+        let intent = logged_intent(&mode).unwrap();
+        assert!(intent.starts_with(&"x".repeat(audit::MAX_TEXT)));
+        assert!(intent.ends_with(" [truncated]"));
+        assert_eq!(audit::clip("short"), "short");
+        assert_eq!(logged_intent(&Mode::Check), None);
     }
 
     /// `last_valid` is 100 in every test; the deadline is short so stuck cases end quickly.

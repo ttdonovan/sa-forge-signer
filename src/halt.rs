@@ -123,8 +123,10 @@ pub fn resume<T: Read + Write>(
     };
     write!(
         tty,
-        "sa-forge-signer: resume signing with {scope}?\n  halted since {} by {}: {}\nType 'yes' to resume: ",
-        halt.ts, halt.by, halt.reason
+        "sa-forge-signer: resume signing with {scope}?\n  halted since {} by {}\n  reason (caller text): {}\nType 'yes' to resume: ",
+        halt.ts,
+        printable(&halt.by, MAX_PRINTED),
+        printable(&halt.reason, MAX_PRINTED)
     )?;
     tty.flush()?;
     let mut answer = String::new();
@@ -142,6 +144,31 @@ pub fn resume<T: Read + Write>(
         ..Entry::default()
     })?;
     Ok(true)
+}
+
+/// Most characters of caller text a terminal prompt prints.
+pub const MAX_PRINTED: usize = 200;
+
+/// `text` safe to print on a terminal, at most `max` characters of it: control and bidirectional
+/// formatting characters are shown escaped, so caller text cannot move the cursor or reorder a prompt.
+pub fn printable(text: &str, max: usize) -> String {
+    let mut out = String::new();
+    let mut chars = text.chars();
+    for c in chars.by_ref().take(max) {
+        if c.is_control() || is_bidi(c) {
+            out.extend(c.escape_default());
+        } else {
+            out.push(c);
+        }
+    }
+    if chars.next().is_some() {
+        out.push_str(" [truncated]");
+    }
+    out
+}
+
+const fn is_bidi(c: char) -> bool {
+    matches!(c, '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
 }
 
 /// The controlling terminal, never stdin, so an agent piping input cannot resume.
@@ -314,6 +341,38 @@ pub mod tests {
                 .map(|e| (e.command.as_str(), e.key.as_str()))
                 .collect::<Vec<_>>(),
             [("halt", "a"), ("resume", "a")]
+        );
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn caller_text_cannot_steer_the_terminal() {
+        assert_eq!(printable("plain text", 50), "plain text");
+        // Cursor up and erase line, a newline, a C1 CSI, DEL and a right-to-left override.
+        let shown = printable("ok\u{1b}[1A\u{1b}[2K\nfake\u{9b}2K\u{7f}\u{202e}evil", 100);
+        assert!(
+            !shown.chars().any(|c| c.is_control() || is_bidi(c)),
+            "{shown:?}"
+        );
+        assert!(
+            shown.contains("\\u{1b}[1A") && shown.contains("\\n"),
+            "{shown:?}"
+        );
+        assert_eq!(printable("abcdef", 3), "abc [truncated]");
+        assert_eq!(printable("abc", 3), "abc");
+    }
+
+    #[test]
+    fn the_resume_prompt_escapes_the_halt_reason() {
+        let d = dir("resume-escape");
+        set(&d, Some("a"), &halt("x\u{1b}[2K\rType 'yes'")).unwrap();
+        let mut t = Some(term("no\n"));
+        assert!(resume(&d, Some("a"), t.as_mut(), 20).is_err());
+        let out = String::from_utf8(t.unwrap().output).unwrap();
+        assert!(!out.contains('\u{1b}') && !out.contains('\r'), "{out:?}");
+        assert!(
+            out.contains("reason (caller text): x\\u{1b}[2K\\rType"),
+            "{out:?}"
         );
         std::fs::remove_dir_all(&d).unwrap();
     }

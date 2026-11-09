@@ -1,7 +1,7 @@
 //! Append-only, hash-chained JSONL audit log, and the per-key signing lock.
 //!
 //! The signer writes no key material here. `summary` and `intent` are caller-supplied text and
-//! are recorded as given: callers must not put secrets in them.
+//! are recorded as given, up to [`MAX_TEXT`] characters: callers must not put secrets in them.
 
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
@@ -19,6 +19,19 @@ pub const LOOKBACK: u64 = 2 * 86_400;
 const CHUNK: u64 = 64 * 1024;
 
 const GENESIS: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+/// Most characters of caller text (`summary`, `intent`) an entry keeps.
+pub const MAX_TEXT: usize = 500;
+
+/// At most [`MAX_TEXT`] characters of `text`, marked when cut, so caller text cannot grow the log
+/// that every sign reads back.
+pub fn clip(text: &str) -> String {
+    let mut chars = text.chars();
+    let mut out: String = chars.by_ref().take(MAX_TEXT).collect();
+    if chars.next().is_some() {
+        out.push_str(" [truncated]");
+    }
+    out
+}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Entry {

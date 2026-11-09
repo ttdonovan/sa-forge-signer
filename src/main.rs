@@ -408,7 +408,12 @@ fn key_show(path: &std::path::Path, name: &str) -> Result<ExitCode> {
         .map_or_else(|e| format!("unavailable: {e}"), |l| format!("{l} lamports"));
     let halted = match halt::active(&cfg.state_dir, name) {
         Ok(None) => "no".to_owned(),
-        Ok(Some(h)) => format!("since {} by {}: {}", h.ts, h.by, h.reason),
+        Ok(Some(h)) => format!(
+            "since {} by {}: {}",
+            h.ts,
+            halt::printable(&h.by, halt::MAX_PRINTED),
+            halt::printable(&h.reason, halt::MAX_PRINTED)
+        ),
         Err(e) => format!("unreadable: {e:#}"),
     };
     let approved = match policy_approval::approved(&cfg.state_dir, name) {
