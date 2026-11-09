@@ -61,8 +61,10 @@ pub fn read_next(
 
 /// Rate and daily spend from the audit log.
 ///
-/// Every attempt counts toward the rate: final `sign` entries, plus intents that never got one
-/// (the process died mid-sign). Spend counts what each sent transaction cost when that is known
+/// Every attempt that was not refused counts toward the rate: final `sign` entries, plus intents
+/// that never got one (the process died mid-sign). A refusal sends nothing and counts nothing, so
+/// another token naming this key cannot use up its rate, and retrying a refusal never prolongs it.
+/// Spend counts what each sent transaction cost when that is known
 /// (confirmed or failed, with metadata). When it is not known (the outcome is unknown, the
 /// metadata never arrived, or the process died), the intent's simulated spend is charged as a
 /// reservation, and with no simulation figure the whole daily cap is: an unresolved transaction
@@ -85,6 +87,7 @@ pub fn usage(entries: &[Entry], key: &KeyConfig, now: u64) -> Usage {
         })
     };
     let signs_last_minute = finals()
+        .filter(|e| e.outcome != "refused")
         .chain(orphan_intents())
         .filter(|e| e.ts >= now.saturating_sub(MINUTE))
         .count();

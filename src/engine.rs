@@ -1148,6 +1148,23 @@ mod tests {
     }
 
     #[test]
+    fn refused_signs_do_not_count_toward_the_rate() {
+        let k = key(); // 2 per minute
+        let refused = [
+            sign_final(100, "", "refused", None),
+            sign_final(101, "", "refused", None),
+            sign_final(102, "", "refused", None),
+        ];
+        assert!(limits(&refused, &k, 110).is_ok(), "refusals sent nothing");
+        // Every attempt that got past the checks still counts, whatever its outcome.
+        let tried = [
+            sign_final(100, "a", "simulation_failed", None),
+            sign_final(101, "b", "confirmed", Some(-1)),
+        ];
+        assert!(limits(&tried, &k, 110).is_err());
+    }
+
+    #[test]
     fn an_orphan_intent_counts_toward_the_rate() {
         let k = key(); // 2 per minute
         assert!(limits(&[intent(100, "a", Some(-1))], &k, 120).is_ok());

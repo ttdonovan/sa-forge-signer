@@ -264,7 +264,7 @@ impl Snapshot {
         seen
     }
 
-    /// The signer's view of a key's limits at `now`, as `limits` in `src/engine.rs` computes it.
+    /// The signer's view of a key's limits at `now`, as `usage` in `src/facts.rs` computes it.
     pub fn usage(&self, key: &str, cap: u64, now: u64) -> Usage {
         let mine: Vec<&Entry> = self.entries.iter().filter(|e| e.key == key).collect();
         let finals = || mine.iter().filter(|e| e.command == "sign");
@@ -277,6 +277,7 @@ impl Snapshot {
             })
         };
         let recent = finals()
+            .filter(|e| e.outcome != "refused")
             .chain(orphans())
             .filter(|e| e.ts >= now.saturating_sub(MINUTE))
             .count();
@@ -541,6 +542,8 @@ mod tests {
             entry(now - 6, SIGN_INTENT, "pending", "c", None),
             // Older than a day: not charged, but still unresolved.
             entry(now - DAY - 1, SIGN_INTENT, "pending", "d", Some(-1)),
+            // Refused: sent nothing, so neither charged nor counted toward the rate.
+            entry(now - 5, "sign", "refused", "e", None),
         ]));
         let u = s.usage("k", 1_000, now);
         assert_eq!(u.spent, 90 + 600 + 1_000);
