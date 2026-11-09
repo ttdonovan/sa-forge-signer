@@ -3,6 +3,8 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -28,8 +30,20 @@ pub struct Entry {
     pub signature: Option<String>,
     pub slot: Option<u64>,
     pub balance_change: Option<i64>,
+    /// Left out when empty, as the signer writes it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub findings: Vec<Finding>,
+    /// The key's policy digest; left out when absent, as the signer writes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<String>,
     pub prev: String,
     pub hash: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Finding {
+    pub check: String,
+    pub detail: String,
 }
 
 impl Entry {
@@ -62,6 +76,14 @@ pub struct Snapshot {
     pub chain: Chain,
     /// Signatures with a final `sign` entry.
     resolved: HashSet<String>,
+    /// The last entry's hash: where the chain continues.
+    prev: String,
+    /// Complete lines read so far, and the last of them with its newline.
+    lines: usize,
+    offset: u64,
+    tail: Vec<u8>,
+    /// An unreadable line was met: like `parse`, read no entries after it.
+    stopped: bool,
 }
 
 impl Snapshot {
@@ -71,39 +93,70 @@ impl Snapshot {
 
     /// Parses complete lines only: a trailing line without a newline may still be being written.
     pub fn parse(text: &str) -> Self {
-        let complete = text.rfind('\n').and_then(|i| text.get(..i)).unwrap_or("");
-        let mut entries = Vec::new();
-        let mut chain = Chain::Ok;
-        let mut prev = GENESIS.to_owned();
-        for (i, line) in complete.lines().enumerate() {
-            let n = i.saturating_add(1);
+        let mut s = Self {
+            entries: Vec::new(),
+            chain: Chain::Ok,
+            resolved: HashSet::new(),
+            prev: GENESIS.to_owned(),
+            lines: 0,
+            offset: 0,
+            tail: Vec::new(),
+            stopped: false,
+        };
+        s.extend(text);
+        s
+    }
+
+    /// Adds the complete lines of `text`, the bytes that follow the last line read.
+    fn extend(&mut self, text: &str) {
+        let Some(complete) = text.rfind('\n').and_then(|i| text.get(..=i)) else {
+            return;
+        };
+        for line in complete.lines() {
+            self.lines = self.lines.saturating_add(1);
+            if self.stopped {
+                continue;
+            }
             let entry: Entry = match serde_json::from_str(line) {
                 Ok(e) => e,
                 Err(e) => {
-                    chain = Chain::Broken(n, format!("unreadable: {e}"));
-                    break;
+                    self.chain = Chain::Broken(self.lines, format!("unreadable: {e}"));
+                    self.stopped = true;
+                    continue;
                 }
             };
-            if chain == Chain::Ok {
-                if entry.prev != prev {
-                    chain = Chain::Broken(n, "prev does not match the previous entry".to_owned());
+            if self.chain == Chain::Ok {
+                if entry.prev != self.prev {
+                    self.chain = Chain::Broken(
+                        self.lines,
+                        "prev does not match the previous entry".to_owned(),
+                    );
                 } else if entry.digest().as_deref() != Some(entry.hash.as_str()) {
-                    chain = Chain::Broken(n, "hash does not match its content".to_owned());
+                    self.chain =
+                        Chain::Broken(self.lines, "hash does not match its content".to_owned());
                 }
             }
-            prev.clone_from(&entry.hash);
-            entries.push(entry);
+            self.prev.clone_from(&entry.hash);
+            if entry.command == "sign"
+                && let Some(sig) = &entry.signature
+            {
+                self.resolved.insert(sig.clone());
+            }
+            self.entries.push(entry);
         }
-        let resolved = entries
-            .iter()
-            .filter(|e| e.command == "sign")
-            .filter_map(|e| e.signature.clone())
-            .collect();
-        Self {
-            entries,
-            chain,
-            resolved,
-        }
+        let without_last = complete.len().saturating_sub(1);
+        let start = complete
+            .get(..without_last)
+            .and_then(|c| c.rfind('\n'))
+            .map_or(0, |i| i.saturating_add(1));
+        self.tail = complete
+            .as_bytes()
+            .get(start..)
+            .unwrap_or_default()
+            .to_vec();
+        self.offset = self
+            .offset
+            .saturating_add(u64::try_from(complete.len()).unwrap_or(u64::MAX));
     }
 
     pub fn read(path: &Path) -> std::io::Result<Self> {
@@ -112,6 +165,48 @@ impl Snapshot {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::empty()),
             Err(e) => Err(e),
         }
+    }
+
+    /// Reads what was appended since the last read; a log that shrank or changed before that point
+    /// is read again whole. Equal to [`Snapshot::read`] for a log that is only appended to, but an
+    /// edit above the last line read is not seen: read it whole now and then.
+    pub fn refresh(&mut self, path: &Path) -> std::io::Result<()> {
+        let mut file = match File::open(path) {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                *self = Self::empty();
+                return Ok(());
+            }
+            Err(e) => return Err(e),
+        };
+        if file.metadata()?.len() < self.offset || !self.tail_unchanged(&mut file)? {
+            *self = Self::read(path)?;
+            return Ok(());
+        }
+        file.seek(SeekFrom::Start(self.offset))?;
+        let mut added = Vec::new();
+        file.read_to_end(&mut added)?;
+        // Only complete lines: a character still being written must not fail the read.
+        let end = added
+            .iter()
+            .rposition(|b| *b == b'\n')
+            .map_or(0, |i| i.saturating_add(1));
+        let text = std::str::from_utf8(added.get(..end).unwrap_or_default())
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        self.extend(text);
+        Ok(())
+    }
+
+    /// Whether the last line read is still where it was.
+    fn tail_unchanged(&self, file: &mut File) -> std::io::Result<bool> {
+        let len = u64::try_from(self.tail.len()).unwrap_or(u64::MAX);
+        let Some(start) = self.offset.checked_sub(len) else {
+            return Ok(false);
+        };
+        file.seek(SeekFrom::Start(start))?;
+        let mut now = vec![0; self.tail.len()];
+        file.read_exact(&mut now)?;
+        Ok(now == self.tail)
     }
 
     /// A sent transaction whose outcome is not known: needs reconciling before a retry.
@@ -269,6 +364,102 @@ mod tests {
         }
     }
 
+    fn temp(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "sa-forge-signer-console-{tag}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d.join("audit.jsonl")
+    }
+
+    fn same(a: &Snapshot, b: &Snapshot) -> bool {
+        let hashes = |s: &Snapshot| s.entries.iter().map(|e| e.hash.clone()).collect::<Vec<_>>();
+        hashes(a) == hashes(b) && a.chain == b.chain && a.resolved == b.resolved
+    }
+
+    fn log_of(n: u64) -> String {
+        chain(
+            (0..n)
+                .map(|i| {
+                    entry(
+                        i,
+                        if i % 2 == 0 { SIGN_INTENT } else { "sign" },
+                        "confirmed",
+                        &format!("s{}", i / 2),
+                        Some(-5),
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn refresh_matches_a_full_read_as_the_log_grows() {
+        let path = temp("grow");
+        let text = format!("{}not json\n{}", log_of(4), log_of(1));
+        let mut s = Snapshot::empty();
+        // Every prefix, so lines arrive whole, in pieces, and several at once.
+        for end in (0..=text.len()).step_by(37).chain([text.len()]) {
+            std::fs::write(&path, text.as_bytes().get(..end).unwrap()).unwrap();
+            s.refresh(&path).unwrap();
+            assert!(
+                same(&s, &Snapshot::read(&path).unwrap()),
+                "after {end} bytes"
+            );
+        }
+        assert!(matches!(s.chain, Chain::Broken(5, _)), "{:?}", s.chain);
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn refresh_reads_a_rewritten_or_shrunk_log_again_whole() {
+        let path = temp("rewrite");
+        let mut s = Snapshot::empty();
+        std::fs::write(&path, log_of(3)).unwrap();
+        s.refresh(&path).unwrap();
+        let tampered = log_of(4).replacen("\"ts\":2", "\"ts\":9", 1);
+        std::fs::write(&path, &tampered).unwrap();
+        s.refresh(&path).unwrap();
+        assert!(
+            matches!(s.chain, Chain::Broken(3, _)),
+            "the line before the old end changed: {:?}",
+            s.chain
+        );
+        std::fs::write(&path, log_of(1)).unwrap();
+        s.refresh(&path).unwrap();
+        assert!(same(&s, &Snapshot::read(&path).unwrap()), "shrunk");
+        std::fs::remove_file(&path).unwrap();
+        s.refresh(&path).unwrap();
+        assert!(s.entries.is_empty(), "removed");
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    // An edit above the last line read is not seen until a full read, which the app does each minute.
+    #[test]
+    fn refresh_parses_only_the_appended_lines() {
+        let path = temp("append");
+        let text = log_of(3);
+        std::fs::write(&path, &text).unwrap();
+        let mut s = Snapshot::empty();
+        s.refresh(&path).unwrap();
+        let edited = text.replacen("\"ts\":0", "\"ts\":7", 1);
+        let longer = log_of(4);
+        std::fs::write(
+            &path,
+            format!("{edited}{}", longer.get(text.len()..).unwrap()),
+        )
+        .unwrap();
+        s.refresh(&path).unwrap();
+        assert_eq!((s.entries.len(), s.chain.clone()), (4, Chain::Ok));
+        assert!(matches!(
+            Snapshot::read(&path).unwrap().chain,
+            Chain::Broken(1, _)
+        ));
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
     #[test]
     fn verifies_and_detects_tampering() {
         let text = chain(vec![
@@ -287,6 +478,22 @@ mod tests {
     #[test]
     fn verifies_a_log_the_signer_wrote() {
         let s = Snapshot::parse(include_str!("../tests/fixtures/signer-audit.jsonl"));
+        assert_eq!((s.entries.len(), s.chain), (2, Chain::Ok));
+    }
+
+    /// Also written by the signer: an entry with instruction-table findings.
+    #[test]
+    fn verifies_an_entry_with_findings() {
+        let s = Snapshot::parse(include_str!(
+            "../tests/fixtures/signer-audit-findings.jsonl"
+        ));
+        assert_eq!((s.entries.len(), s.chain), (1, Chain::Ok));
+    }
+
+    /// Also written by the signer: a `key approve` entry and a sign, each with a policy digest.
+    #[test]
+    fn verifies_entries_with_a_policy() {
+        let s = Snapshot::parse(include_str!("../tests/fixtures/signer-audit-policy.jsonl"));
         assert_eq!((s.entries.len(), s.chain), (2, Chain::Ok));
     }
 

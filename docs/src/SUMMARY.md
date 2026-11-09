@@ -20,6 +20,8 @@
 - [Contributing](dev/contributing.md)
 - [Code map](dev/code-map.md)
 - [Plan](dev/plan.md)
+- [Hardening proposals](dev/hardening.md)
+- [RPC calls and latency](dev/rpc-latency.md)
 - [Changelog](dev/changelog.md)
 - [Writing the docs](dev/writing-docs.md)
 - [Building an app](dev/apps.md)
@@ -29,6 +31,7 @@
 - [Apps](apps/README.md)
   - [Console](apps/console.md)
   - [Grant page](apps/grant.md)
+  - [IDL table](apps/idl-table.md)
 
 # Appendix
 

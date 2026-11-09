@@ -1,0 +1,38 @@
+[package]
+name = "sa-forge-signer-idl-table"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.89"
+description = "Generates sa-forge-signer's instruction table from the SAGE, Player Profile and Profile Faction Codama IDLs, without copying the IDLs."
+license = "Unlicense OR MIT"
+publish = false
+
+# Its own workspace: kept out of the signer's build, release and dependency gates.
+[workspace]
+
+[dependencies]
+anyhow = "=1.0.104"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+sha2 = "=0.11.0"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+# DENY PANICS:
+unwrap_used = "deny"
+expect_used = "deny"
+indexing_slicing = "deny"
+arithmetic_side_effects = "deny"
+unreachable = "deny"
+unimplemented = "deny"
+unchecked_time_subtraction = "deny"
+todo = "deny"
+string_slice = "deny"
+panic_in_result_fn = "deny"
+panic = "deny"
+exit = "deny"
+as_conversions = "deny"

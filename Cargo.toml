@@ -29,6 +29,8 @@ solana-signature = "3"
 solana-signer = "4.0.0"
 solana-transaction = { version = "5", features = ["wincode"] }
 tiny_http = "0.12"
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["fmt", "json", "std"] }
 toml = "1.1.6"
 ureq = { version = "3.4.2", features = ["json"] }
 wincode = "0.6"

@@ -1,14 +1,24 @@
 //! sa-forge-signer: a thin, self-hosted signer for agents playing SAGE C4 on Z.ink. Unofficial.
 
 mod audit;
+#[cfg(test)]
+mod bench;
 mod checks;
 mod cluster;
 mod config;
 mod engine;
+mod facts;
+mod halt;
+mod instruction_table;
 mod keystore;
 mod payload;
+mod policy;
+mod policy_approval;
 mod rpc;
 mod serve;
+#[cfg(test)]
+mod testrpc;
+mod trace;
 mod transfer;
 
 use std::path::PathBuf;
@@ -53,6 +63,21 @@ enum Command {
         intent: Option<String>,
         /// Payload file, or '-' for stdin
         payload: String,
+    },
+    /// Stop all signing with one key, or every key, until `resume`; `check` still runs
+    Halt {
+        /// The key to halt [default: every key]
+        #[arg(long)]
+        key: Option<String>,
+        /// Why, recorded in the audit log and shown by every refused sign
+        #[arg(long)]
+        reason: String,
+    },
+    /// Lift a halt after confirming at the terminal (never stdin); nothing else lifts one
+    Resume {
+        /// The key to resume [default: the halt on every key; a key's own halt needs --key]
+        #[arg(long)]
+        key: Option<String>,
     },
     /// Manage keys in the key store
     #[command(subcommand)]
@@ -106,8 +131,10 @@ enum KeyCommand {
         #[arg(long)]
         from: PathBuf,
     },
-    /// Show a configured key's pubkey, class, approval and balance
+    /// Show a configured key's pubkey, class, approval, policy digest and balance
     Show { name: String },
+    /// Approve the key's current policy digest after confirming at the terminal (never stdin)
+    Approve { name: String },
     /// Build an unsigned payload that funds a configured key with ZINK; sign it with `sign`
     Fund {
         /// The configured key to fund
@@ -153,6 +180,7 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<ExitCode> {
+    trace::init()?;
     let path = match cli.config {
         Some(p) => p,
         None => config::default_path()?,
@@ -175,6 +203,8 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 &Mode::Sign { intent },
             )?)
         }
+        Command::Halt { key, reason } => halt_command(&path, key.as_deref(), &reason),
+        Command::Resume { key } => resume_command(&path, key.as_deref()),
         Command::Key(cmd) => key_command(&path, cmd),
         Command::Config(ConfigCommand::Init) => {
             config::init(&path)?;
@@ -224,6 +254,54 @@ fn run(cli: Cli) -> Result<ExitCode> {
             }
         }
     }
+}
+
+/// `halt`: writes the halt and its audit entry; `check` still runs.
+fn halt_command(path: &std::path::Path, key: Option<&str>, reason: &str) -> Result<ExitCode> {
+    let cfg = Config::load(path, true)?;
+    if let Some(k) = key {
+        cfg.key(k)?;
+    }
+    let reason = reason.trim();
+    if reason.is_empty() {
+        bail!("--reason must not be empty");
+    }
+    let h = halt::Halt {
+        ts: engine::now(),
+        reason: reason.to_owned(),
+        by: "cli".to_owned(),
+    };
+    halt::set(&cfg.state_dir, key, &h)?;
+    eprintln!(
+        "halted {}; lift it with `sa-forge-signer resume{}` at a terminal",
+        key.map_or_else(|| "every key".to_owned(), |k| format!("key {k:?}")),
+        key.map_or_else(String::new, |k| format!(" --key {k}"))
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `resume`: only at the controlling terminal.
+fn resume_command(path: &std::path::Path, key: Option<&str>) -> Result<ExitCode> {
+    let cfg = Config::load(path, true)?;
+    if let Some(k) = key {
+        cfg.key(k)?;
+    }
+    let scope = key.map_or_else(|| "every key".to_owned(), |k| format!("key {k:?}"));
+    if halt::resume(&cfg.state_dir, key, halt::terminal(), engine::now())? {
+        eprintln!("resumed {scope}");
+    } else {
+        eprintln!("{scope} was not halted; nothing changed");
+    }
+    let still: Vec<&str> = cfg
+        .keys
+        .iter()
+        .filter(|k| matches!(halt::active(&cfg.state_dir, &k.name), Ok(Some(_))))
+        .map(|k| k.name.as_str())
+        .collect();
+    if !still.is_empty() {
+        eprintln!("still halted: {}", still.join(", "));
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn key_command(path: &std::path::Path, cmd: KeyCommand) -> Result<ExitCode> {
@@ -292,29 +370,69 @@ fn key_command(path: &std::path::Path, cmd: KeyCommand) -> Result<ExitCode> {
             );
             Ok(ExitCode::SUCCESS)
         }
-        KeyCommand::Show { name } => {
-            let cfg = Config::load(path, true)?;
-            let key = cfg.key(&name)?;
-            let file = match KeyStore::new(&cfg.key_dir).load(&name) {
-                Ok(kp) if kp.pubkey() == key.pubkey => "ok".to_owned(),
-                Ok(kp) => format!("MISMATCH: file holds {}", kp.pubkey()),
-                Err(e) => format!("unavailable: {e:#}"),
-            };
-            let balance = rpc::Rpc::new(&cfg.rpc_url)
-                .balance(&key.pubkey)
-                .map_or_else(|e| format!("unavailable: {e}"), |l| format!("{l} lamports"));
-            println!(
-                "name:     {}\npubkey:   {}\nclass:    {:?}\napproval: {:?}\nprofile:  {}\nkey file: {file}\nbalance:  {balance}",
-                key.name,
-                key.pubkey,
-                key.class,
-                key.approval,
-                key.profile
-                    .map_or_else(|| "-".to_owned(), |p| p.to_string())
-            );
-            Ok(ExitCode::SUCCESS)
-        }
+        KeyCommand::Approve { name } => key_approve(path, &name),
+        KeyCommand::Show { name } => key_show(path, &name),
     }
+}
+
+/// `key approve`: only at the controlling terminal.
+fn key_approve(path: &std::path::Path, name: &str) -> Result<ExitCode> {
+    let cfg = Config::load(path, true)?;
+    let key = cfg.key(name)?;
+    if policy_approval::approve(&cfg.state_dir, key, halt::terminal(), engine::now())? {
+        eprintln!("approved policy {} for key {name:?}", key.policy);
+    } else {
+        eprintln!(
+            "policy {} for key {name:?} was already approved; nothing changed",
+            key.policy
+        );
+    }
+    if !key.require_policy_approval {
+        eprintln!(
+            "note: key {name:?} does not set require_policy_approval, so its signs do not wait for approval"
+        );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn key_show(path: &std::path::Path, name: &str) -> Result<ExitCode> {
+    let cfg = Config::load(path, true)?;
+    let key = cfg.key(name)?;
+    let file = match KeyStore::new(&cfg.key_dir).load(name) {
+        Ok(kp) if kp.pubkey() == key.pubkey => "ok".to_owned(),
+        Ok(kp) => format!("MISMATCH: file holds {}", kp.pubkey()),
+        Err(e) => format!("unavailable: {e:#}"),
+    };
+    let balance = rpc::Rpc::new(&cfg.rpc_url)
+        .balance(&key.pubkey)
+        .map_or_else(|e| format!("unavailable: {e}"), |l| format!("{l} lamports"));
+    let halted = match halt::active(&cfg.state_dir, name) {
+        Ok(None) => "no".to_owned(),
+        Ok(Some(h)) => format!("since {} by {}: {}", h.ts, h.by, h.reason),
+        Err(e) => format!("unreadable: {e:#}"),
+    };
+    let approved = match policy_approval::approved(&cfg.state_dir, name) {
+        Ok(Some(a)) if a.policy == key.policy => format!("approved at {}", a.ts),
+        Ok(Some(a)) => format!("not approved (approved: {})", a.policy),
+        Ok(None) => "not approved".to_owned(),
+        Err(e) => format!("unreadable: {e:#}"),
+    };
+    println!(
+        "name:     {}\npubkey:   {}\nclass:    {:?}\napproval: {:?}\nprofile:  {}\npolicy:   {} ({approved}; {})\nkey file: {file}\nbalance:  {balance}\nhalted:   {halted}",
+        key.name,
+        key.pubkey,
+        key.class,
+        key.approval,
+        key.profile
+            .map_or_else(|| "-".to_owned(), |p| p.to_string()),
+        key.policy,
+        if key.require_policy_approval {
+            "required to sign"
+        } else {
+            "not required"
+        }
+    );
+    Ok(ExitCode::SUCCESS)
 }
 
 fn key_import(

@@ -1,8 +1,10 @@
 //! Minimal Solana JSON-RPC client: only the calls the signer needs.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
-use std::time::Duration;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use solana_address::Address;
@@ -74,20 +76,39 @@ const COMMITMENT: &str = "confirmed";
 /// Longest any single RPC call may take. It bounds how far a sign can overrun its confirmation
 /// deadline (see `serve::DRAIN_DEADLINE`).
 pub const RPC_TIMEOUT: Duration = Duration::from_secs(15);
+/// How long an idle RPC connection is kept for the next sign (ureq's default is 15 s).
+pub const MAX_IDLE: Duration = Duration::from_secs(120);
+/// How long a genesis hash is reused before it is read again.
+pub const GENESIS_TTL: Duration = Duration::from_secs(300);
 
 impl Rpc {
+    /// A client for `url`. Every `Rpc` for one URL shares one connection pool for the life of the
+    /// process, so a sign does not pay for a new TCP and TLS handshake.
     pub fn new(url: &str) -> Self {
-        let config = ureq::Agent::config_builder()
-            .timeout_global(Some(RPC_TIMEOUT))
-            .http_status_as_error(false)
-            .build();
+        static AGENTS: OnceLock<Mutex<HashMap<String, ureq::Agent>>> = OnceLock::new();
+        let build = || {
+            let config = ureq::Agent::config_builder()
+                .timeout_global(Some(RPC_TIMEOUT))
+                .http_status_as_error(false)
+                // An agent pauses between signs; keep the connection for that. A connection the
+                // server has closed is found and dropped before reuse.
+                .max_idle_age(MAX_IDLE)
+                .build();
+            ureq::Agent::new_with_config(config)
+        };
+        let agent = AGENTS.get_or_init(Mutex::default).lock().map_or_else(
+            |_| build(),
+            |mut agents| agents.entry(url.to_owned()).or_insert_with(build).clone(),
+        );
         Self {
             url: url.to_owned(),
-            agent: ureq::Agent::new_with_config(config),
+            agent,
         }
     }
 
     fn call(&self, method: &str, params: &Value) -> Result<Value> {
+        // The method only: the URL may hold an API key.
+        let _span = tracing::debug_span!("rpc", method).entered();
         let body = json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
         let mut resp = self
             .agent
@@ -115,8 +136,25 @@ impl Rpc {
             .ok_or_else(|| RpcError::Shape(format!("{method}: no result")))
     }
 
+    /// The node's genesis hash, cached per URL for [`GENESIS_TTL`]: a chain's never changes, so
+    /// the `chain` check costs a call every few minutes, not one per sign, and a long-running
+    /// `serve` still notices a URL that starts answering for another chain.
     pub fn genesis_hash(&self) -> Result<String> {
-        str_field(&self.call("getGenesisHash", &json!([]))?, "getGenesisHash")
+        static GENESIS: OnceLock<Mutex<HashMap<String, (String, Instant)>>> = OnceLock::new();
+        let cache = GENESIS.get_or_init(Mutex::default);
+        let fresh = cache.lock().ok().and_then(|c| {
+            c.get(&self.url)
+                .filter(|(_, at)| at.elapsed() < GENESIS_TTL)
+                .map(|(g, _)| g.clone())
+        });
+        if let Some(g) = fresh {
+            return Ok(g);
+        }
+        let g = str_field(&self.call("getGenesisHash", &json!([]))?, "getGenesisHash")?;
+        if let Ok(mut c) = cache.lock() {
+            c.insert(self.url.clone(), (g.clone(), Instant::now()));
+        }
+        Ok(g)
     }
 
     /// Returns a fresh blockhash and its last valid block height.

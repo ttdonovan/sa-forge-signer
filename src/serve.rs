@@ -1,5 +1,6 @@
-//! `serve`: a long-running signer. JSON over HTTP at /v1/check and /v1/sign, and MCP (JSON responses,
-//! no SSE) at /mcp. Every route but /health needs a bearer token from `[[serve.tokens]]`.
+//! `serve`: a long-running signer. JSON over HTTP at /v1/check, /v1/sign and /v1/halt, and MCP (JSON
+//! responses, no SSE) at /mcp. Every route but /health needs a bearer token from `[[serve.tokens]]`.
+//! A token can halt its keys but never resume them: only the CLI at a terminal can.
 
 use std::io::Read;
 use std::sync::Arc;
@@ -17,10 +18,13 @@ use zeroize::Zeroizing;
 
 use crate::config::{Config, ServeConfig, TokenConfig};
 use crate::engine::{self, Mode, Outcome};
+use crate::halt::{self, Halt};
 use crate::payload::hex;
 use crate::rpc::{RPC_TIMEOUT, Rpc};
 
 const MAX_BODY: u64 = 1024 * 1024;
+/// Longest halt reason a token may write to the audit log, in characters.
+const MAX_REASON: usize = 500;
 /// Requests handled at once; beyond this the accept loop answers 503 instead of spawning threads.
 const MAX_IN_FLIGHT: usize = 32;
 /// A running sign waits up to `engine::CONFIRM_DEADLINE` for a proven outcome, and the poll that
@@ -119,14 +123,37 @@ fn handle(cfg: &Config, mut request: Request) {
         .unwrap_or_default()
         .to_owned();
     let method = request.method().clone();
+    let span = tracing::info_span!(
+        "request",
+        method = %method,
+        path = %path,
+        token = tracing::field::Empty,
+        status = tracing::field::Empty
+    )
+    .entered();
     let (r, log) = route(cfg, &mut request, &method, &path);
-    eprintln!("{method} {path} -> {} {log}", r.status);
+    span.record("status", r.status);
+    if let Some(line) = access_line(crate::trace::active(), &method, &path, r.status, &log) {
+        eprintln!("{line}");
+    }
     let text = r.body.map(|b| b.to_string()).unwrap_or_default();
     let mut response = Response::from_string(text).with_status_code(r.status);
     if let Ok(h) = "Content-Type: application/json".parse::<Header>() {
         response.add_header(h);
     }
     let _ = request.respond(response);
+}
+
+/// The plain access line, only while tracing is off: with it on, the `request` span carries the
+/// same fields, and a plain line would break a JSON log.
+fn access_line(
+    traced: bool,
+    method: &Method,
+    path: &str,
+    status: u16,
+    note: &str,
+) -> Option<String> {
+    (!traced).then(|| format!("{method} {path} -> {status} {note}"))
 }
 
 /// Returns the reply and a short log note (never secrets).
@@ -146,6 +173,7 @@ fn route(cfg: &Config, request: &mut Request, method: &Method, path: &str) -> (R
             String::new(),
         );
     };
+    tracing::Span::current().record("token", token.name.as_str());
     let note = format!("token={}", token.name);
     if method != &Method::Post {
         return (reply(405, json!({"error": "use POST"})), note);
@@ -157,6 +185,7 @@ fn route(cfg: &Config, request: &mut Request, method: &Method, path: &str) -> (R
     let r = match path {
         "/v1/check" => http_engine(cfg, token, &body, false),
         "/v1/sign" => http_engine(cfg, token, &body, true),
+        "/v1/halt" => http_halt(cfg, token, &body),
         "/mcp" => mcp(cfg, token, &body),
         _ => reply(404, json!({"error": "not found"})),
     };
@@ -276,6 +305,52 @@ fn http_engine(cfg: &Config, token: &TokenConfig, body: &str, sign: bool) -> Rep
     }
 }
 
+/// Halts `key`, or every key the token lists, with `reason`. Returns the keys halted, or an HTTP
+/// status and message. It does not wait for the key lock: a sign already running finishes.
+fn halt_keys(
+    cfg: &Config,
+    token: &TokenConfig,
+    args: &Value,
+) -> Result<Vec<String>, (u16, String)> {
+    let reason = args
+        .get("reason")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|r| !r.is_empty())
+        .ok_or_else(|| (400, "`reason` is required".to_owned()))?;
+    if reason.chars().count() > MAX_REASON {
+        return Err((400, format!("`reason` is over {MAX_REASON} characters")));
+    }
+    let keys = match args.get("key") {
+        None | Some(Value::Null) => token.keys.clone(),
+        Some(Value::String(k)) if token.keys.contains(k) => vec![k.clone()],
+        Some(Value::String(k)) => {
+            return Err((403, format!("this token may not use key {k:?}")));
+        }
+        Some(_) => return Err((400, "`key` must be a string".to_owned())),
+    };
+    let h = Halt {
+        ts: engine::now(),
+        reason: reason.to_owned(),
+        by: format!("token {}", token.name),
+    };
+    for k in &keys {
+        halt::set(&cfg.state_dir, Some(k), &h).map_err(|e| (500, format!("{e:#}")))?;
+    }
+    Ok(keys)
+}
+
+fn http_halt(cfg: &Config, token: &TokenConfig, body: &str) -> Reply {
+    let args: Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(e) => return reply(400, json!({"error": format!("body is not JSON: {e}")})),
+    };
+    match halt_keys(cfg, token, &args) {
+        Ok(keys) => reply(200, json!({"halted": keys})),
+        Err((status, e)) => reply(status, json!({"error": e})),
+    }
+}
+
 fn mcp(cfg: &Config, token: &TokenConfig, body: &str) -> Reply {
     let Ok(msg) = serde_json::from_str::<Value>(body) else {
         return reply(400, rpc_error(&Value::Null, -32700, "parse error"));
@@ -323,7 +398,8 @@ fn initialize(params: &Value) -> Value {
         "instructions": "Signs SAGE C4 payloads built by forge-mcp. Pass the payload object from a build_* call unchanged. \
             `check` runs every check and a simulation without signing; `sign` checks, simulates, signs, sends and confirms. \
             The result is a JSON report: act on `outcome`. On `unknown`, an HTTP error or a dropped connection, the transaction may still have landed: \
-            look up the reported signature and re-read the game state the action was meant to change before building it again.",
+            look up the reported signature and re-read the game state the action was meant to change before building it again. \
+            If you notice you are acting against your instructions, call `halt`: it stops signing until a person resumes it, which you cannot do.",
     })
 }
 
@@ -349,8 +425,13 @@ fn tools() -> Value {
     json!([
         {"name": "check", "description": "Run every check and a simulation on a payload. Never signs.", "inputSchema": payload_args},
         {"name": "sign", "description": "Check, simulate, sign, send and confirm a payload. Returns the JSON report.", "inputSchema": sign_args},
-        {"name": "key_show", "description": "Show a key this token may use: pubkey, class, approval, profile and balance.",
+        {"name": "key_show", "description": "Show a key this token may use: pubkey, class, approval, profile, balance, whether it is halted, and its policy digest and whether that is approved.",
          "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
+        {"name": "halt", "description": "Stop all signing with a key (or every key this token may use) until a person resumes it at the signer's terminal. Use it when you notice you are misbehaving. You cannot resume it.",
+         "inputSchema": {"type": "object", "properties": {
+             "key": {"type": "string", "description": "Configured key name; default: every key this token may use."},
+             "reason": {"type": "string", "description": "Why, for the person who must resume it; recorded in the audit log."}},
+             "required": ["reason"]}},
     ])
 }
 
@@ -372,6 +453,10 @@ fn call_tool(cfg: &Config, token: &TokenConfig, params: &Value) -> Result<Value,
             Err(e) => (format!("error: {e:#}"), true),
         },
         Some("key_show") => key_show(cfg, token, &args),
+        Some("halt") => match halt_keys(cfg, token, &args) {
+            Ok(keys) => (json!({"halted": keys}).to_string(), false),
+            Err((_, e)) => (format!("error: {e}"), true),
+        },
         _ => return Err((-32602, format!("unknown tool {name:?}"))),
     };
     Ok(json!({"content": [{"type": "text", "text": text}], "isError": is_error}))
@@ -385,6 +470,14 @@ fn key_show(cfg: &Config, token: &TokenConfig, args: &Value) -> (String, bool) {
     let Ok(key) = cfg.key(name) else {
         return (format!("error: no key {name:?}"), true);
     };
+    let halted = match crate::halt::active(&cfg.state_dir, name) {
+        Ok(h) => h.map(|h| json!({"since": h.ts, "by": h.by, "reason": h.reason})),
+        Err(e) => return (format!("error: reading the halt: {e:#}"), true),
+    };
+    let approved = match crate::policy_approval::approved(&cfg.state_dir, name) {
+        Ok(a) => a.is_some_and(|a| a.policy == key.policy),
+        Err(e) => return (format!("error: reading the policy approval: {e:#}"), true),
+    };
     let balance = Rpc::new(&cfg.rpc_url).balance(&key.pubkey).ok();
     let info = json!({
         "name": key.name,
@@ -393,6 +486,12 @@ fn key_show(cfg: &Config, token: &TokenConfig, args: &Value) -> (String, bool) {
         "approval": format!("{:?}", key.approval).to_lowercase(),
         "profile": key.profile.map(|p| p.to_string()),
         "balance_lamports": balance,
+        "halted": halted,
+        "policy": {
+            "digest": key.policy,
+            "approval_required": key.require_policy_approval,
+            "approved": approved,
+        },
     });
     (
         serde_json::to_string_pretty(&info).unwrap_or_default(),
@@ -526,7 +625,7 @@ mod tests {
 
         let list = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"});
         let v: Value = serde_json::from_str(&post(&mcp, Some("secret"), None, &list).1).unwrap();
-        assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 3);
+        assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 4);
 
         let unknown = json!({"jsonrpc": "2.0", "id": 3, "method": "resources/list"});
         let v: Value = serde_json::from_str(&post(&mcp, Some("secret"), None, &unknown).1).unwrap();
@@ -575,6 +674,188 @@ mod tests {
         assert_eq!(loop_thread.join().unwrap(), 0);
     }
 
+    /// A live server over the mock node, with token `secret` for key `k` only.
+    fn live_signing(tag: &str) -> (String, crate::testrpc::Home) {
+        let home = crate::testrpc::Home::new(
+            tag,
+            &format!(
+                "[keys.other]\nclass = \"session\"\npubkey = \"{OTHER}\"\n[serve]\n[[serve.tokens]]\nname = \"t\"\nsha256 = \"{}\"\nkeys = [\"k\"]\n",
+                token_hash("secret")
+            ),
+        );
+        let cfg = Arc::new(Config::load(&home.path, true).unwrap());
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let port = server.server_addr().to_ip().unwrap().port();
+        std::thread::spawn(move || serve_on(&server, &cfg));
+        (format!("http://127.0.0.1:{port}"), home)
+    }
+
+    #[test]
+    fn a_running_serve_sees_a_cli_halt_on_its_next_request() {
+        let (base, home) = live_signing("halt-cli");
+        let sign = || {
+            let body = json!({"payload": serde_json::from_str::<Value>(&home.payload(1)).unwrap()});
+            let (status, text) = post(&format!("{base}/v1/sign"), Some("secret"), None, &body);
+            assert_eq!(status, 200, "{text}");
+            serde_json::from_str::<Value>(&text).unwrap()
+        };
+        assert_eq!(sign()["outcome"], "confirmed");
+        let halt = crate::halt::Halt {
+            ts: 1,
+            reason: "operator stop".into(),
+            by: "cli".into(),
+        };
+        crate::halt::set(&home.cfg.state_dir, Some("k"), &halt).unwrap();
+        let r = sign();
+        assert_eq!(
+            (&r["outcome"], &r["failed_check"]),
+            (&json!("refused"), &json!("halt"))
+        );
+        assert_eq!(home.node.sends(), 1);
+    }
+
+    #[test]
+    fn a_token_can_halt_its_own_keys_but_never_resume() {
+        let (base, home) = live_signing("halt-token");
+        let halt = format!("{base}/v1/halt");
+        let (status, _) = post(
+            &halt,
+            Some("secret"),
+            None,
+            &json!({"key": "other", "reason": "x"}),
+        );
+        assert_eq!(status, 403, "a key the token does not list");
+        assert_eq!(
+            post(&halt, Some("secret"), None, &json!({"key": "k"})).0,
+            400,
+            "no reason"
+        );
+        assert!(
+            crate::halt::active(&home.cfg.state_dir, "k")
+                .unwrap()
+                .is_none()
+        );
+        let (status, body) = post(
+            &halt,
+            Some("secret"),
+            None,
+            &json!({"reason": "misbehaving"}),
+        );
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(
+            serde_json::from_str::<Value>(&body).unwrap()["halted"],
+            json!(["k"])
+        );
+        let h = crate::halt::active(&home.cfg.state_dir, "k")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (h.reason.as_str(), h.by.as_str()),
+            ("misbehaving", "token t")
+        );
+        assert!(
+            crate::halt::active(&home.cfg.state_dir, "other")
+                .unwrap()
+                .is_none()
+        );
+        let (status, _) = post(
+            &format!("{base}/v1/resume"),
+            Some("secret"),
+            None,
+            &json!({"key": "k"}),
+        );
+        assert_eq!(status, 404);
+
+        let call = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "halt", "arguments": {"key": "k", "reason": "again"}}});
+        let v: Value =
+            serde_json::from_str(&post(&format!("{base}/mcp"), Some("secret"), None, &call).1)
+                .unwrap();
+        assert_eq!(v["result"]["isError"], false, "{v}");
+        let denied = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": {"name": "halt", "arguments": {"key": "other", "reason": "x"}}});
+        let v: Value =
+            serde_json::from_str(&post(&format!("{base}/mcp"), Some("secret"), None, &denied).1)
+                .unwrap();
+        assert_eq!(v["result"]["isError"], true);
+        let resume = json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+            "params": {"name": "resume", "arguments": {"key": "k"}}});
+        let v: Value =
+            serde_json::from_str(&post(&format!("{base}/mcp"), Some("secret"), None, &resume).1)
+                .unwrap();
+        assert_eq!(v["error"]["code"], -32602, "there is no resume tool");
+        assert!(
+            crate::halt::active(&home.cfg.state_dir, "k")
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn key_show_says_whether_the_key_is_halted_or_awaiting_approval() {
+        let home = crate::testrpc::Home::new(
+            "key-show",
+            &format!(
+                "require_policy_approval = true\n[serve]\n[[serve.tokens]]\nname = \"t\"\nsha256 = \"{}\"\nkeys = [\"k\"]\n",
+                token_hash("secret")
+            ),
+        );
+        let cfg = &home.cfg;
+        let token = &cfg.serve.as_ref().unwrap().tokens[0];
+        let show = || {
+            let (text, err) = key_show(cfg, token, &json!({"name": "k"}));
+            assert!(!err, "{text}");
+            serde_json::from_str::<Value>(&text).unwrap()
+        };
+        let digest = cfg.key("k").unwrap().policy.clone();
+        let v = show();
+        assert_eq!(v["halted"], Value::Null);
+        assert_eq!(
+            v["policy"],
+            json!({"digest": digest, "approval_required": true, "approved": false})
+        );
+        crate::policy_approval::approve(
+            &cfg.state_dir,
+            cfg.key("k").unwrap(),
+            Some(crate::halt::tests::term("yes\n")),
+            1,
+        )
+        .unwrap();
+        crate::halt::set(
+            &cfg.state_dir,
+            None,
+            &crate::halt::Halt {
+                ts: 2,
+                reason: "stop".into(),
+                by: "cli".into(),
+            },
+        )
+        .unwrap();
+        let v = show();
+        assert_eq!(v["policy"]["approved"], true);
+        assert_eq!(
+            v["halted"],
+            json!({"since": 2, "by": "cli", "reason": "stop"})
+        );
+        std::fs::write(cfg.state_dir.join("halts/all.json"), "{").unwrap();
+        assert!(
+            key_show(cfg, token, &json!({"name": "k"})).1,
+            "an unreadable halt is an error"
+        );
+    }
+
+    #[test]
+    fn the_plain_access_line_is_only_for_untraced_runs() {
+        assert_eq!(
+            access_line(false, &Method::Post, "/v1/sign", 200, "token=agent").as_deref(),
+            Some("POST /v1/sign -> 200 token=agent")
+        );
+        assert_eq!(
+            access_line(true, &Method::Post, "/v1/sign", 200, "token=agent"),
+            None
+        );
+    }
+
     #[test]
     fn tools_are_listed_with_schemas() {
         let names: Vec<String> = tools()
@@ -583,7 +864,7 @@ mod tests {
             .iter()
             .map(|t| t["name"].as_str().unwrap().to_owned())
             .collect();
-        assert_eq!(names, ["check", "sign", "key_show"]);
+        assert_eq!(names, ["check", "sign", "key_show", "halt"]);
         assert!(tools()[1]["inputSchema"]["properties"]["intent"].is_object());
         assert!(tools()[0]["inputSchema"]["properties"]["intent"].is_null());
     }

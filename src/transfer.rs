@@ -55,7 +55,7 @@ pub fn fund_payload(from: &Address, to: &Address, lamports: u64, summary: &str) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::checks::{Policy, structural};
+    use crate::checks::{Limits, Policy, structural};
     use crate::payload::Payload;
     use solana_message::Message;
     use std::str::FromStr;
@@ -102,6 +102,7 @@ mod tests {
                     allowed_programs: &allowed,
                     transfer_to: dests,
                     partial_signers: &[],
+                    limits: Limits::DEFAULT,
                 },
             )
         };

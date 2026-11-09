@@ -1,0 +1,97 @@
+{
+  "kind": "programNode",
+  "name": "gameStarFrame",
+  "publicKey": "C4SAgeKLgb3pTLWhVr6NRwWyYFuTR7ZeSXFrzoLwfMzF",
+  "version": "1.2.3",
+  "definedTypes": [
+    {
+      "kind": "definedTypeNode",
+      "name": "pair",
+      "type": {
+        "kind": "structTypeNode",
+        "fields": [
+          { "kind": "structFieldTypeNode", "name": "a", "type": { "kind": "numberTypeNode", "format": "u32", "endian": "le" } },
+          { "kind": "structFieldTypeNode", "name": "b", "type": { "kind": "numberTypeNode", "format": "u8", "endian": "le" } }
+        ]
+      }
+    }
+  ],
+  "instructions": [
+    {
+      "kind": "instructionNode",
+      "name": "moveFleet",
+      "accounts": [
+        { "kind": "instructionAccountNode", "name": "profileValidationSigner", "isSigner": true, "isWritable": false },
+        { "kind": "instructionAccountNode", "name": "profileValidationProfile", "isSigner": false, "isWritable": true },
+        { "kind": "instructionAccountNode", "name": "profileValidationCertificate", "isSigner": false, "isWritable": false },
+        { "kind": "instructionAccountNode", "name": "profileValidationProgram", "isSigner": false, "isWritable": false },
+        { "kind": "instructionAccountNode", "name": "fleet", "isSigner": false, "isWritable": true },
+        { "kind": "instructionAccountNode", "name": "funder", "isSigner": true, "isWritable": true }
+      ],
+      "arguments": [
+        { "kind": "instructionArgumentNode", "name": "discriminator", "type": { "kind": "fixedSizeTypeNode", "size": 8, "type": { "kind": "bytesTypeNode" } }, "defaultValue": { "kind": "bytesValueNode", "data": "0102030405060708", "encoding": "base16" } },
+        { "kind": "instructionArgumentNode", "name": "keyIndex", "type": { "kind": "numberTypeNode", "format": "u16", "endian": "le" } }
+      ],
+      "discriminators": [{ "kind": "fieldDiscriminatorNode", "name": "discriminator", "offset": 0 }]
+    },
+    {
+      "kind": "instructionNode",
+      "name": "adminRename",
+      "accounts": [
+        { "kind": "instructionAccountNode", "name": "adminSigner", "isSigner": true, "isWritable": false },
+        { "kind": "instructionAccountNode", "name": "adminProfile", "isSigner": false, "isWritable": false },
+        { "kind": "instructionAccountNode", "name": "currentSigner", "isSigner": "either", "isWritable": false },
+        { "kind": "instructionAccountNode", "name": "currentProfile", "isSigner": false, "isWritable": true },
+        { "kind": "instructionAccountNode", "name": "extra", "isSigner": false, "isWritable": false, "isOptional": true }
+      ],
+      "arguments": [
+        { "kind": "instructionArgumentNode", "name": "discriminator", "type": { "kind": "fixedSizeTypeNode", "size": 8, "type": { "kind": "bytesTypeNode" } }, "defaultValue": { "kind": "bytesValueNode", "data": "1112131415161718", "encoding": "base16" } },
+        { "kind": "instructionArgumentNode", "name": "args", "type": { "kind": "definedTypeLinkNode", "name": "pair" } },
+        { "kind": "instructionArgumentNode", "name": "adminKeyIndex", "type": { "kind": "numberTypeNode", "format": "u16", "endian": "le" } },
+        { "kind": "instructionArgumentNode", "name": "currentKeyIndex", "type": { "kind": "numberTypeNode", "format": "u16", "endian": "le" } },
+        { "kind": "instructionArgumentNode", "name": "names", "type": { "kind": "arrayTypeNode", "item": { "kind": "publicKeyTypeNode" }, "count": { "kind": "prefixedCountNode", "prefix": { "kind": "numberTypeNode", "format": "u32", "endian": "le" } } } }
+      ]
+    },
+    {
+      "kind": "instructionNode",
+      "name": "operatorAct",
+      "accounts": [
+        { "kind": "instructionAccountNode", "name": "profileValidationSigner", "isSigner": true, "isWritable": false },
+        { "kind": "instructionAccountNode", "name": "profileValidationProfile", "isSigner": false, "isWritable": false },
+        { "kind": "instructionAccountNode", "name": "adminSigner", "isSigner": true, "isWritable": false },
+        { "kind": "instructionAccountNode", "name": "adminProfile", "isSigner": false, "isWritable": false }
+      ],
+      "arguments": [
+        { "kind": "instructionArgumentNode", "name": "discriminator", "type": { "kind": "fixedSizeTypeNode", "size": 8, "type": { "kind": "bytesTypeNode" } }, "defaultValue": { "kind": "bytesValueNode", "data": "2122232425262728", "encoding": "base16" } },
+        { "kind": "instructionArgumentNode", "name": "operatorKeyIndex", "type": { "kind": "numberTypeNode", "format": "u16", "endian": "le" } },
+        { "kind": "instructionArgumentNode", "name": "adminKeyIndex", "type": { "kind": "numberTypeNode", "format": "u16", "endian": "le" } }
+      ]
+    },
+    {
+      "kind": "instructionNode",
+      "name": "addKeys",
+      "accounts": [
+        { "kind": "instructionAccountNode", "name": "funder", "isSigner": true, "isWritable": true },
+        { "kind": "instructionAccountNode", "name": "key", "isSigner": true, "isWritable": false },
+        { "kind": "instructionAccountNode", "name": "profile", "isSigner": false, "isWritable": true }
+      ],
+      "arguments": [
+        { "kind": "instructionArgumentNode", "name": "discriminator", "type": { "kind": "fixedSizeTypeNode", "size": 8, "type": { "kind": "bytesTypeNode" } }, "defaultValue": { "kind": "bytesValueNode", "data": "4142434445464748", "encoding": "base16" } },
+        { "kind": "instructionArgumentNode", "name": "keyIndex", "type": { "kind": "numberTypeNode", "format": "u16", "endian": "le" } }
+      ]
+    },
+    {
+      "kind": "instructionNode",
+      "name": "nameThing",
+      "accounts": [
+        { "kind": "instructionAccountNode", "name": "profileSigner", "isSigner": true, "isWritable": false },
+        { "kind": "instructionAccountNode", "name": "profileProfile", "isSigner": false, "isWritable": false }
+      ],
+      "arguments": [
+        { "kind": "instructionArgumentNode", "name": "discriminator", "type": { "kind": "fixedSizeTypeNode", "size": 8, "type": { "kind": "bytesTypeNode" } }, "defaultValue": { "kind": "bytesValueNode", "data": "3132333435363738", "encoding": "base16" } },
+        { "kind": "instructionArgumentNode", "name": "name", "type": { "kind": "stringTypeNode", "encoding": "utf8" } },
+        { "kind": "instructionArgumentNode", "name": "keyIndex", "type": { "kind": "numberTypeNode", "format": "u16", "endian": "le" } }
+      ]
+    }
+  ]
+}

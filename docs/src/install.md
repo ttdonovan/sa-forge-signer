@@ -18,7 +18,7 @@ scripts/installer/install.sh --from-checkout    # build both from this checkout'
 scripts/installer/install.sh --help             # --prefix, --from-source, --console-ref, --skip-attestation, --force
 ```
 
-It installs binaries only. The config, keys and audit log stay in `~/.config/sa-forge-signer/` (see [Configuration](configuration.md)).
+It installs binaries only. The config, keys and audit log stay in `~/.config/sa-forge-signer/` (see [Configuration](configuration.md)). Nothing about logging is set at install: tracing is switched on per run with `SA_FORGE_SIGNER_LOG` in the environment of whatever starts the signer, such as your shell, the `serve` service, a container or an MCP client's config ([Tracing](configuration.md#tracing)).
 
 `--uninstall` removes both binaries and their links, and never touches the config, keys or audit log. While key files remain it keeps the signer, which `key destroy` needs, and lists the steps to retire them (see [Key lifecycle](key-lifecycle.md)): revoke each grant, `sa-forge-signer key destroy <name>`, then remove the config directory. Run it again afterwards, or add `--force` to remove the signer anyway.
 
