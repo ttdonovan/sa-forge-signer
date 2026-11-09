@@ -21,6 +21,7 @@
 - [Code map](dev/code-map.md)
 - [Plan](dev/plan.md)
 - [Hardening proposals](dev/hardening.md)
+- [RPC calls and latency](dev/rpc-latency.md)
 - [Changelog](dev/changelog.md)
 - [Writing the docs](dev/writing-docs.md)
 - [Building an app](dev/apps.md)
