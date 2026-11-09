@@ -15,7 +15,7 @@ Only `class` and `pubkey` on each key, and a token for `serve`, have to be set; 
 | Setting | Default | Set it when |
 |---|---|---|
 | `cluster` | `"zink-testnet"` | never: it is the only cluster |
-| `rpc_url` | the cluster's public RPC (`https://rpc1.z.ink`) | you use another RPC you trust ([Security](security.md)) |
+| `rpc_url` | the cluster's public RPC (`https://rpc1.z.ink`) | you use another RPC you trust ([Security](security.md)). It must be `https://`; `http://` loads only for a loopback host (`127.0.0.1`, `::1`, `localhost`), such as a local validator, so signed transactions and any API key in the URL never cross a network in clear |
 | `explorer_url` | the cluster's explorer (`https://explorer.z.ink`) | you prefer another block explorer. Used only for links: the `explorer` field of a `sign` report and the [console](apps/console.md)'s links; the signer never calls it |
 | `key_dir` | `keys`, beside the config | keys live elsewhere (in Docker, `/run/keys`) |
 | `state_dir` | `state`, beside the config | the audit log lives elsewhere (in Docker, `/var/lib/sa-forge-signer`) |

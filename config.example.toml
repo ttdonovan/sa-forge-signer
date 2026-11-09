@@ -2,7 +2,7 @@
 # Relative paths resolve against this file's directory.
 
 cluster = "zink-testnet"
-# rpc_url = "https://rpc1.z.ink"   # default for the cluster
+# rpc_url = "https://rpc1.z.ink"   # default for the cluster; https only (http only on loopback)
 # explorer_url = "https://explorer.z.ink"   # default for the cluster; for links only
 # key_dir = "keys"                 # 0700; one 0600 file per key
 # state_dir = "state"              # audit log

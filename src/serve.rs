@@ -214,7 +214,7 @@ fn check_origin(serve: &ServeConfig, request: &Request) -> Result<(), String> {
 }
 
 /// The host part of `host[:port]` or `[v6]:port`.
-fn host_name(authority: &str) -> &str {
+pub fn host_name(authority: &str) -> &str {
     let authority = authority.split('/').next().unwrap_or_default();
     if let Some(rest) = authority.strip_prefix('[') {
         return rest.split(']').next().unwrap_or_default();
