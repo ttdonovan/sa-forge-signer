@@ -133,13 +133,27 @@ fn handle(cfg: &Config, mut request: Request) {
     .entered();
     let (r, log) = route(cfg, &mut request, &method, &path);
     span.record("status", r.status);
-    eprintln!("{method} {path} -> {} {log}", r.status);
+    if let Some(line) = access_line(crate::trace::active(), &method, &path, r.status, &log) {
+        eprintln!("{line}");
+    }
     let text = r.body.map(|b| b.to_string()).unwrap_or_default();
     let mut response = Response::from_string(text).with_status_code(r.status);
     if let Ok(h) = "Content-Type: application/json".parse::<Header>() {
         response.add_header(h);
     }
     let _ = request.respond(response);
+}
+
+/// The plain access line, only while tracing is off: with it on, the `request` span carries the
+/// same fields, and a plain line would break a JSON log.
+fn access_line(
+    traced: bool,
+    method: &Method,
+    path: &str,
+    status: u16,
+    note: &str,
+) -> Option<String> {
+    (!traced).then(|| format!("{method} {path} -> {status} {note}"))
 }
 
 /// Returns the reply and a short log note (never secrets).
@@ -827,6 +841,18 @@ mod tests {
         assert!(
             key_show(cfg, token, &json!({"name": "k"})).1,
             "an unreadable halt is an error"
+        );
+    }
+
+    #[test]
+    fn the_plain_access_line_is_only_for_untraced_runs() {
+        assert_eq!(
+            access_line(false, &Method::Post, "/v1/sign", 200, "token=agent").as_deref(),
+            Some("POST /v1/sign -> 200 token=agent")
+        );
+        assert_eq!(
+            access_line(true, &Method::Post, "/v1/sign", 200, "token=agent"),
+            None
         );
     }
 

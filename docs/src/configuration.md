@@ -59,4 +59,6 @@ Tracing is off by default. Set `SA_FORGE_SIGNER_LOG` to `error`, `warn`, `info`,
 | `rpc` | debug | each RPC call, with its method name |
 | `request` | info | each `serve` request, with the method, path, status and token name |
 
+While tracing is on, `serve` no longer prints its plain access line (`POST /v1/sign -> 200 token=agent`), so a JSON log holds only JSON: the `request` span carries the same method, path, status and token name, plus the duration.
+
 Spans never carry key material, partial signers, tokens or their hashes, the RPC URL (it may hold an API key), or caller-supplied text (`summary`, `intent`).

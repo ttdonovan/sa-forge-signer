@@ -63,16 +63,25 @@ where
     }
 }
 
+static ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether `init` installed a subscriber.
+pub fn active() -> bool {
+    ACTIVE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Installs the subscriber the environment asks for, if any.
 pub fn init() -> Result<()> {
     let level = std::env::var("SA_FORGE_SIGNER_LOG").ok();
     let format = std::env::var("SA_FORGE_SIGNER_LOG_FORMAT").ok();
-    if let Some((level, format)) = settings(level.as_deref(), format.as_deref())?
-        && tracing::subscriber::set_global_default(subscriber(level, format, std::io::stderr))
-            .is_err()
+    let Some((level, format)) = settings(level.as_deref(), format.as_deref())? else {
+        return Ok(());
+    };
+    if tracing::subscriber::set_global_default(subscriber(level, format, std::io::stderr)).is_err()
     {
         bail!("a tracing subscriber is already installed");
     }
+    ACTIVE.store(true, std::sync::atomic::Ordering::Relaxed);
     Ok(())
 }
 
