@@ -36,6 +36,8 @@ struct Pending {
     lines: Vec<String>,
     payer: Pubkey,
     profile: String,
+    /// The RPC it was reviewed against, after a genesis check.
+    rpc_url: String,
     ix: Instruction,
     /// The key a grant adds, to report its index once it lands.
     granted: Option<Pubkey>,
@@ -109,27 +111,34 @@ impl State {
 }
 
 async fn check_network(s: State) -> Result<(), String> {
-    let result = rpc::check_network(&s.rpc_url.get_untracked()).await;
+    checked_url(s).await.map(|_| ())
+}
+
+/// The RPC URL in the field, once its genesis hash is Z.ink testnet's. Every read and transaction
+/// step takes its URL from here, so a URL edited after connecting is never used unchecked.
+async fn checked_url(s: State) -> Result<String, String> {
+    let url = s.rpc_url.get_untracked();
+    let result = rpc::check_network(&url).await;
     s.network.set(Some(result.clone()));
-    result
+    result.map(|()| url)
 }
 
 async fn load_profile(s: State) -> Result<Profile, String> {
     let address = s.profile_addr.get_untracked();
     parse_pubkey(&address)?;
-    let data = rpc::account_data(&s.rpc_url.get_untracked(), address.trim()).await?;
+    let data = rpc::account_data(&checked_url(s).await?, address.trim()).await?;
     let profile = decode_profile(&data)?;
     s.profile.set(Some(profile.clone()));
     Ok(profile)
 }
 
 async fn connect(s: State, name: String) -> Result<(), String> {
-    check_network(s).await?;
+    let url = checked_url(s).await?;
     let address = bridge::connect(&name).await?;
     s.wallet.set(Some(address.clone()));
     s.say(Line::Info(format!("connected {name}: {address}")));
     if s.profile_addr.get_untracked().trim().is_empty() {
-        let found = rpc::find_profiles(&s.rpc_url.get_untracked(), &address).await?;
+        let found = rpc::find_profiles(&url, &address).await?;
         if let [only] = found.as_slice() {
             s.profile_addr.set(only.clone());
             load_profile(s).await?;
@@ -278,7 +287,7 @@ async fn stage(
     granted: Option<Pubkey>,
     profile: String,
 ) -> Result<(), String> {
-    let url = s.rpc_url.get_untracked();
+    let url = checked_url(s).await?;
     let payer = s.wallet_key()?;
     let message = compile_message(
         payer,
@@ -292,6 +301,7 @@ async fn stage(
         lines,
         payer,
         profile,
+        rpc_url: url,
         ix,
         granted,
         logs,
@@ -305,7 +315,11 @@ async fn sign_and_send(s: State) -> Result<(), String> {
         s.pending.set(None);
         return Err("the wallet or profile changed since review; review again".into());
     }
-    let url = s.rpc_url.get_untracked();
+    let url = checked_url(s).await?;
+    if url != p.rpc_url {
+        s.pending.set(None);
+        return Err("the RPC URL changed since review; review again".into());
+    }
     let message = compile_message(
         p.payer,
         std::slice::from_ref(&p.ix),
@@ -373,7 +387,17 @@ fn Network(s: State) -> impl IntoView {
         <section>
             <h2>"Network"</h2>
             <div class="row">
-                <input type="url" bind:value=s.rpc_url aria-label="RPC URL" />
+                <input
+                    type="url"
+                    aria-label="RPC URL"
+                    prop:value=move || s.rpc_url.get()
+                    on:input=move |ev| {
+                        // A new URL is unchecked, and a review made against the old one is void.
+                        s.rpc_url.set(event_target_value(&ev));
+                        s.network.set(None);
+                        s.pending.set(None);
+                    }
+                />
                 <button disabled=move || s.busy.get() on:click=move |_| s.run(check_network(s))>
                     "Check"
                 </button>

@@ -18,7 +18,7 @@ Trunk downloads the `wasm-bindgen` CLI matching `apps/grant/Cargo.lock` the firs
 
 ## Granting a session key
 
-1. **Network:** the RPC defaults to `https://rpc1.z.ink`. Connecting checks its genesis hash and refuses any network other than Z.ink testnet.
+1. **Network:** the RPC defaults to `https://rpc1.z.ink`. Every step that uses it (connecting, reading the profile, reviewing, signing) first checks its genesis hash and refuses any network other than Z.ink testnet. Editing the RPC field clears the check and any transaction under review, and a transaction reviewed against one URL is not sent through another.
 2. **Wallet:** wallets that support Wallet Standard and `solana:signTransaction` appear as buttons. Connecting looks for profiles that hold the wallet among their first four keys, and loads the profile if there is exactly one. Otherwise paste its address.
 3. **Profile:** the table shows every key: index, pubkey, scope, permission names and expiry.
 4. **Grant:** paste the session key's pubkey (`sa-forge-signer key show <name>`), choose permissions (presets or individual SAGE player actions), and an expiration: 7, 30, 60 or 90 days, or No expiration (`expire_time` -1, the key works until it is revoked). It defaults to 7 days, and the page shows the date it ends. **Review** re-reads the profile, builds the instruction and simulates it.
