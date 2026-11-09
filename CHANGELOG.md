@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/ttdonovan/sa-forge-signer/compare/v0.4.1...v0.5.0) - 2026-11-09
+
+### Added
+
+- add opt-in tracing on stderr (SA_FORGE_SIGNER_LOG) with timed spans for each sign phase, RPC call and serve request, and a just bench recipe timing the audit log's reads.
+- report the halt and the policy digest's approval in the MCP key_show tool.
+- add a policy digest per key, recorded in sign audit entries, and optional require_policy_approval with key approve.
+- add instruction_table in report mode, reporting unknown instructions, wrong account counts and profiles other than the key's as findings.
+- [**breaking**] bound ComputeBudget instructions and System transfers per key.
+- run check and sign through one policy function, and preview every sign-only refusal in check.
+- [**breaking**] add halt and resume, a stop on signing that only a person at a terminal can lift.
+- add the grant page, a local web page where the profile authority's own browser wallet grants and revokes a SAGE session key.
+
+### Fixed
+
+- check a sent transaction's status after 400 ms and back off to 1 s, and keep idle RPC connections for 2 minutes between signs.
+- keep one RPC connection pool per URL for the process, and reuse the genesis hash for 5 minutes, so a sign no longer pays a TLS handshake and an extra call.
+- drop serve's plain access line while tracing is on, so a JSON log holds only JSON, and say how to turn tracing on after install.
+- read a key's recent audit entries once per sign, and count its usage in linear time instead of quadratic.
+- read the audit log back from its end for each sign, so a sign's cost no longer grows with the log's age.
+- refuse a payload whose signature is already in the audit log unless a fresh blockhash changes it.
+
 ## [0.4.1](https://github.com/ttdonovan/sa-forge-signer/compare/v0.4.0...v0.4.1) - 2026-11-07
 
 ### Added
