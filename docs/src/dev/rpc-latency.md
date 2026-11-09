@@ -43,7 +43,7 @@ sequenceDiagram
         S->>R: getGenesisHash
     end
     opt the payload has partial signers / creates token accounts
-        S->>R: getMultipleAccounts (new accounts must not exist; token-account owners)
+        S->>R: getMultipleAccounts (new accounts must not exist, and token-account owners)
     end
     S->>R: getLatestBlockhash
     S->>R: getBalance (the key, before)
@@ -73,7 +73,7 @@ sequenceDiagram
             S->>R: sendTransaction (rebroadcast)
         end
     end
-    S->>R: getTransaction (the exact fee and balance change; up to 10 tries)
+    S->>R: getTransaction (the exact fee and balance change, up to 10 tries)
     Note over S: write the final sign entry
 ```
 
