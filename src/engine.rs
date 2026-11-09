@@ -134,6 +134,8 @@ pub enum Mode {
 /// Audit command of the entry written before a transaction is sent.
 pub const SIGN_INTENT: &str = "sign-intent";
 const POLL: Duration = Duration::from_secs(1);
+/// The first status check after sending: about a slot, since most transactions land within one.
+const FIRST_POLL: Duration = Duration::from_millis(400);
 const MAX_RPC_FAILURES: u32 = 60;
 /// Longest a sign waits to prove an outcome. Expiry is proven against the finalized tip, which
 /// trails the confirmed one, so this covers a blockhash's ~150-block life plus finalization; a
@@ -527,6 +529,14 @@ fn unique_within_cap(
     Ok(Ok((tx, last_valid, reserve, report)))
 }
 
+/// The wait before status check `n` (from 1): [`FIRST_POLL`], doubling, never more than `poll`.
+fn poll_delay(n: u32, poll: Duration) -> Duration {
+    let doublings = n.saturating_sub(1).min(16);
+    FIRST_POLL
+        .checked_mul(1_u32 << doublings)
+        .map_or(poll, |d| d.min(poll))
+}
+
 fn send_and_confirm(
     chain: &impl Chain,
     tx: &Transaction,
@@ -556,8 +566,8 @@ fn send_and_confirm(
     // outcome, but an empty status may come from a node other than the one that reported the
     // height, or one with incomplete history. So that ends the wait as `unknown`, never `expired`.
     report.outcome = loop {
-        std::thread::sleep(poll);
         polls = polls.saturating_add(1);
+        std::thread::sleep(poll_delay(polls, poll));
         match chain.signature_status(&signature) {
             Ok(Some(st)) if st.landed() => break landed_outcome(&mut report, st),
             Ok(_) => {}
@@ -2252,6 +2262,18 @@ mod tests {
             1,
             "one kept-alive connection"
         );
+    }
+
+    #[test]
+    fn the_first_status_checks_come_sooner_then_settle_at_the_poll() {
+        let ms = |n| poll_delay(n, POLL).as_millis();
+        assert_eq!(
+            (1..=5).map(ms).collect::<Vec<_>>(),
+            [400, 800, 1_000, 1_000, 1_000]
+        );
+        let fast = Duration::from_millis(5);
+        assert_eq!(poll_delay(1, fast), fast, "never longer than the poll");
+        assert_eq!(poll_delay(u32::MAX, POLL), POLL, "no overflow");
     }
 
     #[test]

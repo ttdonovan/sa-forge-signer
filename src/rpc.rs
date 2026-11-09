@@ -76,6 +76,8 @@ const COMMITMENT: &str = "confirmed";
 /// Longest any single RPC call may take. It bounds how far a sign can overrun its confirmation
 /// deadline (see `serve::DRAIN_DEADLINE`).
 pub const RPC_TIMEOUT: Duration = Duration::from_secs(15);
+/// How long an idle RPC connection is kept for the next sign (ureq's default is 15 s).
+pub const MAX_IDLE: Duration = Duration::from_secs(120);
 /// How long a genesis hash is reused before it is read again.
 pub const GENESIS_TTL: Duration = Duration::from_secs(300);
 
@@ -88,6 +90,9 @@ impl Rpc {
             let config = ureq::Agent::config_builder()
                 .timeout_global(Some(RPC_TIMEOUT))
                 .http_status_as_error(false)
+                // An agent pauses between signs; keep the connection for that. A connection the
+                // server has closed is found and dropped before reuse.
+                .max_idle_age(MAX_IDLE)
                 .build();
             ureq::Agent::new_with_config(config)
         };
