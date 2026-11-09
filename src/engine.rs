@@ -2227,6 +2227,34 @@ mod tests {
     }
 
     #[test]
+    fn signs_share_one_rpc_connection_and_read_the_genesis_hash_once() {
+        let home = crate::testrpc::Home::new("rpc-reuse", "");
+        let sign = Mode::Sign { intent: None };
+        for n in 0..2_u8 {
+            let mut disc = ACT;
+            disc[0] = n;
+            let r = execute(
+                &home.cfg,
+                None,
+                &act(&home, disc, &home.pubkey),
+                &sign,
+                None,
+            )
+            .unwrap()
+            .0;
+            assert_eq!(r.outcome, Outcome::Confirmed);
+        }
+        let methods = home.node.methods.lock().unwrap().clone();
+        let genesis = methods.iter().filter(|m| *m == "getGenesisHash").count();
+        assert_eq!(genesis, 1, "{methods:?}");
+        assert_eq!(
+            home.node.peers.lock().unwrap().len(),
+            1,
+            "one kept-alive connection"
+        );
+    }
+
+    #[test]
     fn without_a_table_there_are_no_findings() {
         let home = crate::testrpc::Home::new("table-none", "");
         let r = execute(

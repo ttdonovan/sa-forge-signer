@@ -191,7 +191,7 @@ flowchart TD
 
 **Threat:** `check` has no rate limit and makes several RPC calls. A token holder that loops on it can get the RPC to throttle the signer, which delays the confirmation polls of transactions already sent and turns them into `unknown`.
 
-**Change:** `[serve] check_per_minute` per token (a sliding minute, in memory; answered with 429), and RPC calls in three classes, with polling of already-sent transactions never waiting behind `check` or preflight reads. The genesis hash is cached per process and re-read every few minutes.
+**Change:** `[serve] check_per_minute` per token (a sliding minute, in memory; answered with 429), and RPC calls in three classes, with polling of already-sent transactions never waiting behind `check` or preflight reads. The genesis hash is cached per process and re-read every few minutes (built: every 5 minutes, per RPC URL, along with one connection pool per URL).
 
 **Tests:** the 429 and its reset; a burst of checks does not delay a poll in a fake RPC with a call budget.
 

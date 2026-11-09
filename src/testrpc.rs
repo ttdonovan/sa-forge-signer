@@ -22,6 +22,10 @@ pub struct Node {
     /// Blockhashes handed out in order; the last repeats.
     pub blockhashes: Mutex<VecDeque<Hash>>,
     pub sends: Mutex<u32>,
+    /// Each request's method, in order.
+    pub methods: Mutex<Vec<String>>,
+    /// Each client address seen: one per connection.
+    pub peers: Mutex<std::collections::HashSet<String>>,
 }
 
 impl Node {
@@ -84,6 +88,10 @@ pub fn start(node: &Arc<Node>) -> String {
             let _ = request.as_reader().read_to_string(&mut body);
             let msg: Value = serde_json::from_str(&body).unwrap_or_default();
             let method = msg["method"].as_str().unwrap_or_default();
+            node.methods.lock().unwrap().push(method.to_owned());
+            if let Some(peer) = request.remote_addr() {
+                node.peers.lock().unwrap().insert(peer.to_string());
+            }
             let result = node.answer(method, &msg["params"]);
             let reply = json!({"jsonrpc": "2.0", "id": msg["id"], "result": result});
             let _ = request.respond(tiny_http::Response::from_string(reply.to_string()));

@@ -6,7 +6,7 @@
 |---|---|
 | The agent reads the key file and skips every check | Keys and config are unreadable by the agent's OS user (separate user or container). Key files must be 0600 in a 0700 directory or the signer refuses to load them. |
 | A buggy or malicious payload (from the builder, a hand-written file or a prompt injection) | The [structural checks](https://ttdonovan.github.io/sa-forge-signer/how-it-works.html), simulation before sending, `confirm` for `wallet` keys, then the on-chain key limits. |
-| A wrong or swapped RPC URL | The RPC's genesis hash must match the cluster profile. |
+| A wrong or swapped RPC URL | The RPC's genesis hash must match the cluster profile. A process re-reads it at least every 5 minutes, so a URL that starts answering for another chain is refused within that time. |
 | Private keys inside payloads (`partial_signers`) | Never logged; the audit log hashes the payload without them; the payload file is deleted once sent. |
 | Secrets in logs | Tracing is off unless `SA_FORGE_SIGNER_LOG` is set, and its spans carry key names, payload hashes, RPC method names, counts and outcomes only: never key material, partial signers, tokens or their hashes, the RPC URL, or caller-supplied text. |
 | Approval spoofed by the agent | `confirm` reads only from the controlling terminal (`/dev/tty`), never stdin. Without a terminal it refuses. This holds only while nothing the agent runs can type into that terminal (see Not covered). |
