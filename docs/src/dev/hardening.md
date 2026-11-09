@@ -18,15 +18,15 @@ A check that refuses what was signed before is a breaking change ([Versioning](c
 
 ```mermaid
 flowchart TD
-    D["2. Duplicate-signature guard"]
-    H["3. Halt"]
-    P["1. One policy function"]
-    C["5. Compute budget and transfer limits"]
-    T["4. Instruction table and profile binding"]
-    DG["7. Policy digest"]
-    U["8. Redeploy watch and holds"]
-    R["9. Reserved headroom"]
-    B["10. RPC budgets in serve"]
+    D["2: Duplicate-signature guard"]
+    H["3: Halt"]
+    P["1: One policy function"]
+    C["5: Compute budget and transfer limits"]
+    T["4: Instruction table and profile binding"]
+    DG["7: Policy digest"]
+    U["8: Redeploy watch and holds"]
+    R["9: Reserved headroom"]
+    B["10: RPC budgets in serve"]
     P --> C
     P --> T
     T --> U
