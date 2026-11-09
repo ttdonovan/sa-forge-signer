@@ -22,6 +22,8 @@ pub struct Node {
     /// Blockhashes handed out in order; the last repeats.
     pub blockhashes: Mutex<VecDeque<Hash>>,
     pub sends: Mutex<u32>,
+    /// Simulations that asked to verify signatures, or carried a non-zero signature.
+    pub signed_simulations: Mutex<u32>,
     /// Each request's method, in order.
     pub methods: Mutex<Vec<String>>,
     /// Each client address seen: one per connection.
@@ -44,6 +46,26 @@ impl Node {
         self.sends.lock().map_or(0, |s| *s)
     }
 
+    pub fn signed_simulations(&self) -> u32 {
+        self.signed_simulations.lock().map_or(0, |s| *s)
+    }
+
+    fn note_simulation(&self, params: &Value) {
+        use base64::Engine;
+        let bytes = params[0]
+            .as_str()
+            .and_then(|t| base64::engine::general_purpose::STANDARD.decode(t).ok())
+            .unwrap_or_default();
+        // A legacy transaction: a one-byte signature count, then 64 bytes per signature.
+        let count = usize::from(bytes.first().copied().unwrap_or(0));
+        let signed = bytes.iter().skip(1).take(count * 64).any(|b| *b != 0);
+        if (signed || params[1]["sigVerify"] != json!(false))
+            && let Ok(mut s) = self.signed_simulations.lock()
+        {
+            *s = s.saturating_add(1);
+        }
+    }
+
     fn answer(&self, method: &str, params: &Value) -> Value {
         match method {
             "getGenesisHash" => json!(ZINK_TESTNET.genesis_hash),
@@ -57,6 +79,7 @@ impl Node {
                 json!({"value": vec![Value::Null; n]})
             }
             "simulateTransaction" => {
+                self.note_simulation(params);
                 json!({"value": {"err": null, "logs": [], "unitsConsumed": 100,
                 "accounts": [{"lamports": AFTER}]}})
             }
