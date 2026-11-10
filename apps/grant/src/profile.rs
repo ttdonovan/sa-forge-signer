@@ -1,7 +1,7 @@
 //! The Player Profile program's `Profile` account, `AddKeys` and `RemoveKeys`, written by hand from
 //! its IDL (its generated SDK is not public). `tests/` checks them against bytes from that SDK.
 
-use crate::tx::{AccountMeta, Instruction, Pubkey, parse_pubkey};
+use crate::tx::{AccountMeta, Instruction, Pubkey, encode_pubkey, parse_pubkey};
 
 pub const PLAYER_PROFILE_PROGRAM: &str = "C4PRoFNroxxzdgeCoM31LJjYRg7kT6ymogSTAT99iD1u";
 pub const SAGE_PROGRAM: &str = "C4SAgeKLgb3pTLWhVr6NRwWyYFuTR7ZeSXFrzoLwfMzF";
@@ -83,6 +83,27 @@ pub fn decode_profile(data: &[u8]) -> Result<Profile, String> {
         key_threshold,
         keys,
     })
+}
+
+/// The key at `index`, provided it is still `expected`. `RemoveKeys` names only an index, and the
+/// profile can change between reading the table and signing, so a revoke checks the key itself.
+pub fn key_at<'a>(
+    profile: &'a Profile,
+    index: u16,
+    expected: &Pubkey,
+) -> Result<&'a ProfileKey, String> {
+    let key = profile
+        .keys
+        .get(usize::from(index))
+        .ok_or("the profile changed: that key is gone; reload it")?;
+    if key.key != *expected {
+        return Err(format!(
+            "the profile changed: key {index} is now {}, not {}; reload it",
+            encode_pubkey(&key.key),
+            encode_pubkey(expected)
+        ));
+    }
+    Ok(key)
 }
 
 /// The index of `wallet`'s unexpired profile-scoped key holding `needed` (or `AUTH`).
@@ -221,6 +242,15 @@ mod tests {
                 },
             ],
         }
+    }
+
+    #[test]
+    fn key_at_refuses_an_index_that_now_holds_another_key() {
+        let p = sample();
+        assert_eq!(key_at(&p, 1, &key(2)).unwrap().key, key(2));
+        let moved = key_at(&p, 1, &key(3)).unwrap_err();
+        assert!(moved.contains("key 1 is now"), "{moved}");
+        assert!(key_at(&p, 2, &key(2)).unwrap_err().contains("gone"));
     }
 
     #[test]

@@ -214,7 +214,7 @@ fn check_origin(serve: &ServeConfig, request: &Request) -> Result<(), String> {
 }
 
 /// The host part of `host[:port]` or `[v6]:port`.
-fn host_name(authority: &str) -> &str {
+pub fn host_name(authority: &str) -> &str {
     let authority = authority.split('/').next().unwrap_or_default();
     if let Some(rest) = authority.strip_prefix('[') {
         return rest.split(']').next().unwrap_or_default();
@@ -712,6 +712,45 @@ mod tests {
             (&json!("refused"), &json!("halt"))
         );
         assert_eq!(home.node.sends(), 1);
+    }
+
+    #[test]
+    fn another_tokens_refused_signs_do_not_use_up_a_keys_rate() {
+        // Key k signs at most 2 a minute; token "agent" may use it, token "intruder" may not.
+        let home = crate::testrpc::Home::new(
+            "rate-tokens",
+            &format!(
+                "rate_limit_per_minute = 2\n[keys.other]\nclass = \"session\"\npubkey = \"{OTHER}\"\n[serve]\n\
+                 [[serve.tokens]]\nname = \"agent\"\nsha256 = \"{}\"\nkeys = [\"k\"]\n\
+                 [[serve.tokens]]\nname = \"intruder\"\nsha256 = \"{}\"\nkeys = [\"other\"]\n",
+                token_hash("agent-secret"),
+                token_hash("intruder-secret")
+            ),
+        );
+        let cfg = Arc::new(Config::load(&home.path, true).unwrap());
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let port = server.server_addr().to_ip().unwrap().port();
+        std::thread::spawn(move || serve_on(&server, &cfg));
+        let base = format!("http://127.0.0.1:{port}");
+        // Each sign moves a different amount, so none is a duplicate of another.
+        let sign = |token: &str, lamports: u64| {
+            let body = json!({"key": "k", "payload": serde_json::from_str::<Value>(&home.payload(lamports)).unwrap()});
+            let (status, text) = post(&format!("{base}/v1/sign"), Some(token), None, &body);
+            assert_eq!(status, 200, "{text}");
+            serde_json::from_str::<Value>(&text).unwrap()
+        };
+        for n in 1..=5 {
+            assert_eq!(sign("intruder-secret", n)["failed_check"], "authorized");
+        }
+        assert_eq!(sign("agent-secret", 6)["outcome"], "confirmed");
+        assert_eq!(sign("agent-secret", 7)["outcome"], "confirmed");
+        // The key's own two signs use up its rate; the refusals before them did not.
+        let r = sign("agent-secret", 8);
+        assert_eq!(
+            (&r["outcome"], &r["failed_check"]),
+            (&json!("refused"), &json!("limits"))
+        );
+        assert_eq!(home.node.sends(), 2);
     }
 
     #[test]

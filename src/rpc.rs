@@ -67,6 +67,15 @@ impl Status {
     }
 }
 
+/// The blockhash a simulation runs against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SimBlockhash {
+    /// The node's latest (`check`).
+    Replace,
+    /// The transaction's own, so an expired one is reported as `BlockhashNotFound` (`sign`).
+    Keep,
+}
+
 pub struct Rpc {
     url: String,
     agent: ureq::Agent,
@@ -232,11 +241,13 @@ impl Rpc {
         Ok(v.get("value").and_then(Value::as_u64))
     }
 
-    /// Simulates a base64 transaction. Unsigned transactions need `sig_verify = false`.
+    /// Simulates a base64 transaction without verifying signatures: the signer sends a node only
+    /// unsigned copies before the transaction's intent is recorded, so a node never holds one it
+    /// could land on its own.
     pub fn simulate(
         &self,
         tx_b64: &str,
-        sig_verify: bool,
+        blockhash: SimBlockhash,
         accounts: &[Address],
     ) -> Result<Simulation> {
         let keys: Vec<String> = accounts.iter().map(ToString::to_string).collect();
@@ -245,8 +256,8 @@ impl Rpc {
             &json!([tx_b64, {
                 "encoding": "base64",
                 "commitment": COMMITMENT,
-                "sigVerify": sig_verify,
-                "replaceRecentBlockhash": !sig_verify,
+                "sigVerify": false,
+                "replaceRecentBlockhash": matches!(blockhash, SimBlockhash::Replace),
                 "accounts": {"encoding": "base64", "addresses": keys},
             }]),
         )?;

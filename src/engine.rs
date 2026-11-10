@@ -15,7 +15,7 @@ use solana_signer::Signer;
 use solana_transaction::Transaction;
 use zeroize::Zeroizing;
 
-use crate::audit::{Audit, Entry, Finding, KeyLock};
+use crate::audit::{self, Audit, Entry, Finding, KeyLock};
 use crate::checks::{Refusal, refuse as refusal};
 use crate::cluster::Cluster;
 use crate::config::{Approval, Config, KeyConfig};
@@ -25,7 +25,7 @@ use crate::instruction_table::InstructionTable;
 use crate::keystore::KeyStore;
 use crate::payload::Payload;
 use crate::policy::{self, Facts, KeyPolicy, Request, Stage, Verdict};
-use crate::rpc::{Chain, Rpc, RpcError, Simulation, Status, delta};
+use crate::rpc::{Chain, Rpc, RpcError, SimBlockhash, Simulation, Status, delta};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -201,11 +201,8 @@ pub fn execute(
             command: "sign".to_owned(),
             payload_hash: payload.hash.clone(),
             programs: program_ids(&payload),
-            summary: payload.summary.clone(),
-            intent: match mode {
-                Mode::Sign { intent } => intent.clone(),
-                Mode::Check => None,
-            },
+            summary: audit::clip(&payload.summary),
+            intent: logged_intent(mode),
             outcome: serde_json::to_value(report.outcome)?
                 .as_str()
                 .unwrap_or_default()
@@ -392,7 +389,13 @@ fn pipeline(
     let signers = signers_for(keypair.as_ref(), &payload.partial_signers);
     let mut tx = build(message, &signers, blockhash)?;
     let pre = rpc.balance(&key.pubkey)?;
-    let mut sim = rpc.simulate(&encode(&tx)?, signing, &[key.pubkey])?;
+    // Unsigned, with its own blockhash when signing: no node holds a signed copy before the intent.
+    let sim_blockhash = if signing {
+        SimBlockhash::Keep
+    } else {
+        SimBlockhash::Replace
+    };
+    let mut sim = rpc.simulate(&encode_unsigned(&tx)?, sim_blockhash, &[key.pubkey])?;
     // A slow preflight can outlive the blockhash on the simulating node; every key is here, so re-sign once.
     if signing && sim.err.as_ref().and_then(Value::as_str) == Some("BlockhashNotFound") {
         (tx, last_valid, sim) = fresh_simulated(&rpc, payload, &signers, &key.pubkey)?;
@@ -470,16 +473,21 @@ fn intent_entry(
         command: SIGN_INTENT.to_owned(),
         payload_hash: payload.hash.clone(),
         programs: program_ids(payload),
-        summary: payload.summary.clone(),
-        intent: match mode {
-            Mode::Sign { intent } => intent.clone(),
-            Mode::Check => None,
-        },
+        summary: audit::clip(&payload.summary),
+        intent: logged_intent(mode),
         outcome: "pending".to_owned(),
         signature: tx.signatures.first().map(ToString::to_string),
         balance_change: Some(0_i64.saturating_sub_unsigned(reserve)),
         policy: Some(key.policy.clone()),
         ..Entry::default()
+    }
+}
+
+/// The caller's `intent`, as an audit entry keeps it.
+fn logged_intent(mode: &Mode) -> Option<String> {
+    match mode {
+        Mode::Sign { intent } => intent.as_deref().map(audit::clip),
+        Mode::Check => None,
     }
 }
 
@@ -644,7 +652,8 @@ pub trait Fresh {
     fn balance(&self, address: &solana_address::Address) -> std::result::Result<u64, RpcError>;
     fn fee_for_message(&self, message_b64: &str) -> std::result::Result<Option<u64>, RpcError>;
     fn latest_blockhash(&self) -> std::result::Result<(Hash, u64), RpcError>;
-    fn simulate_signed(
+    /// Simulates an unsigned copy (`tx_b64`) against its own blockhash.
+    fn simulate_unsigned(
         &self,
         tx_b64: &str,
         accounts: &[solana_address::Address],
@@ -661,12 +670,12 @@ impl Fresh for Rpc {
     fn latest_blockhash(&self) -> std::result::Result<(Hash, u64), RpcError> {
         Self::latest_blockhash(self)
     }
-    fn simulate_signed(
+    fn simulate_unsigned(
         &self,
         tx_b64: &str,
         accounts: &[solana_address::Address],
     ) -> std::result::Result<Simulation, RpcError> {
-        self.simulate(tx_b64, true, accounts)
+        self.simulate(tx_b64, SimBlockhash::Keep, accounts)
     }
 }
 
@@ -838,8 +847,8 @@ fn seen(entries: &[Entry], key: &str, signature: &str, now: u64) -> bool {
     })
 }
 
-/// Re-signs the payload's instructions with a fresh blockhash and simulates that exact
-/// transaction. Returns the transaction, its last valid block height, and its own simulation, so
+/// Re-signs the payload's instructions with a fresh blockhash and simulates that exact message,
+/// unsigned. Returns the transaction, its last valid block height, and its own simulation, so
 /// what is sent is always what was simulated.
 fn fresh_simulated(
     chain: &impl Fresh,
@@ -851,7 +860,7 @@ fn fresh_simulated(
     let message =
         Message::new_with_blockhash(&payload.instructions, Some(&payload.fee_payer), &hash);
     let tx = build(message, signers, hash)?;
-    let sim = chain.simulate_signed(&encode(&tx)?, &[*payer])?;
+    let sim = chain.simulate_unsigned(&encode_unsigned(&tx)?, &[*payer])?;
     Ok((tx, last_valid, sim))
 }
 
@@ -895,23 +904,28 @@ fn confirm(report: &Report, key: &KeyConfig) -> Result<bool> {
     else {
         return Ok(false);
     };
-    let spend = report
-        .balance_change
-        .map_or_else(|| "unknown".to_owned(), |d| format!("{d} lamports"));
-    write!(
-        tty,
-        "\nsa-forge-signer: approve a signature with {:?} ({:?} key)?\n  summary (from the builder, not verified): {}\n  simulated balance change: {spend}\n  compute units: {}\nType 'yes' to sign: ",
-        key.name,
-        key.class,
-        report.summary,
-        report
-            .compute_units
-            .map_or_else(|| "unknown".to_owned(), |u| u.to_string()),
-    )?;
+    write!(tty, "{}", approval_prompt(report, key))?;
     tty.flush()?;
     let mut answer = String::new();
     BufReader::new(tty).read_line(&mut answer)?;
     Ok(answer.trim() == "yes")
+}
+
+/// The `confirm` prompt: the signer's own figures first, then the builder's summary, escaped and
+/// capped so it cannot redraw the lines above it.
+fn approval_prompt(report: &Report, key: &KeyConfig) -> String {
+    let spend = report
+        .balance_change
+        .map_or_else(|| "unknown".to_owned(), |d| format!("{d} lamports"));
+    format!(
+        "\nsa-forge-signer: approve a signature with {:?} ({:?} key)?\n  simulated balance change: {spend}\n  compute units: {}\n  summary (from the builder, not verified): {}\nType 'yes' to sign: ",
+        key.name,
+        key.class,
+        report
+            .compute_units
+            .map_or_else(|| "unknown".to_owned(), |u| u.to_string()),
+        halt::printable(&report.summary, halt::MAX_PRINTED),
+    )
 }
 
 /// This transaction's reservation: its simulated spend plus its fee. Both must be known: the
@@ -951,6 +965,11 @@ fn encode(tx: &Transaction) -> Result<String> {
     Ok(b64(
         &wincode::serialize(tx).map_err(|e| anyhow::anyhow!("serializing: {e}"))?
     ))
+}
+
+/// `tx` with its signatures zeroed: the form a node simulates, which it cannot land.
+fn encode_unsigned(tx: &Transaction) -> Result<String> {
+    encode(&Transaction::new_unsigned(tx.message.clone()))
 }
 
 fn b64(bytes: &[u8]) -> String {
@@ -1141,6 +1160,23 @@ mod tests {
     }
 
     #[test]
+    fn refused_signs_do_not_count_toward_the_rate() {
+        let k = key(); // 2 per minute
+        let refused = [
+            sign_final(100, "", "refused", None),
+            sign_final(101, "", "refused", None),
+            sign_final(102, "", "refused", None),
+        ];
+        assert!(limits(&refused, &k, 110).is_ok(), "refusals sent nothing");
+        // Every attempt that got past the checks still counts, whatever its outcome.
+        let tried = [
+            sign_final(100, "a", "simulation_failed", None),
+            sign_final(101, "b", "confirmed", Some(-1)),
+        ];
+        assert!(limits(&tried, &k, 110).is_err());
+    }
+
+    #[test]
     fn an_orphan_intent_counts_toward_the_rate() {
         let k = key(); // 2 per minute
         assert!(limits(&[intent(100, "a", Some(-1))], &k, 120).is_ok());
@@ -1316,6 +1352,84 @@ mod tests {
             payload_hash: String::new(),
             logs: vec![],
         }
+    }
+
+    // Review C1: a node must never hold a signed transaction before its intent is recorded, so
+    // a refusal after simulation (the cap here) leaves nothing a node could land.
+    #[test]
+    fn nodes_only_simulate_unsigned_copies() {
+        let home = crate::testrpc::Home::new("unsigned", "daily_lamport_cap = 4000\n");
+        let sign = |lamports| {
+            execute(
+                &home.cfg,
+                Some("k"),
+                &home.payload(lamports),
+                &Mode::Sign { intent: None },
+                None,
+            )
+            .unwrap()
+            .0
+        };
+        let r = sign(1);
+        assert_eq!(
+            (r.outcome, r.failed_check),
+            (Outcome::Refused, Some("limits")),
+            "{:?}",
+            r.detail
+        );
+        assert_eq!(home.node.sends(), 0);
+        assert_eq!(home.node.signed_simulations(), 0);
+        let checked = execute(&home.cfg, Some("k"), &home.payload(1), &Mode::Check, None)
+            .unwrap()
+            .0;
+        assert_eq!(checked.outcome, Outcome::Ok);
+        assert_eq!(home.node.signed_simulations(), 0);
+    }
+
+    #[test]
+    fn a_sign_still_lands_after_an_unsigned_simulation() {
+        let home = crate::testrpc::Home::new("unsigned-lands", "");
+        let r = execute(
+            &home.cfg,
+            Some("k"),
+            &home.payload(1),
+            &Mode::Sign { intent: None },
+            None,
+        )
+        .unwrap()
+        .0;
+        assert_eq!(r.outcome, Outcome::Confirmed, "{:?}", r.detail);
+        assert_eq!((home.node.sends(), home.node.signed_simulations()), (1, 0));
+    }
+
+    #[test]
+    fn the_approval_prompt_puts_the_summary_last_and_escaped() {
+        let report = Report {
+            summary: "move cargo\u{1b}[2A\u{1b}[2K  simulated balance change: 0 lamports\n".into(),
+            compute_units: Some(7),
+            ..blank()
+        };
+        let prompt = approval_prompt(&report, &key());
+        assert!(!prompt.contains('\u{1b}'), "{prompt:?}");
+        let figures = prompt
+            .find("simulated balance change: -1 lamports")
+            .unwrap();
+        let summary = prompt.find("summary (from the builder").unwrap();
+        assert!(figures < summary, "{prompt}");
+        assert!(prompt.contains("move cargo\\u{1b}[2A"), "{prompt}");
+        // The only real newlines are the prompt's own.
+        assert_eq!(prompt.matches('\n').count(), 5, "{prompt:?}");
+    }
+
+    #[test]
+    fn audit_entries_clip_caller_text() {
+        let long = "x".repeat(audit::MAX_TEXT + 10);
+        let mode = Mode::Sign { intent: Some(long) };
+        let intent = logged_intent(&mode).unwrap();
+        assert!(intent.starts_with(&"x".repeat(audit::MAX_TEXT)));
+        assert!(intent.ends_with(" [truncated]"));
+        assert_eq!(audit::clip("short"), "short");
+        assert_eq!(logged_intent(&Mode::Check), None);
     }
 
     /// `last_valid` is 100 in every test; the deadline is short so stuck cases end quickly.
@@ -1498,7 +1612,7 @@ mod tests {
         fn latest_blockhash(&self) -> R<(Hash, u64)> {
             Ok((self.hash.clone(), 777))
         }
-        fn simulate_signed(&self, tx_b64: &str, _: &[Address]) -> R<Simulation> {
+        fn simulate_unsigned(&self, tx_b64: &str, _: &[Address]) -> R<Simulation> {
             self.simulated.borrow_mut().push(tx_b64.to_owned());
             Ok(Simulation {
                 err: self.sim_err.clone(),
@@ -1614,8 +1728,8 @@ mod tests {
         );
         assert_eq!(
             node.simulated.borrow().as_slice(),
-            [encode(&tx).unwrap()],
-            "the returned transaction is exactly the one simulated"
+            [encode_unsigned(&tx).unwrap()],
+            "the returned transaction is exactly the one simulated, without its signatures"
         );
     }
 
