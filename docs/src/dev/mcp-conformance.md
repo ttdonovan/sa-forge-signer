@@ -4,7 +4,7 @@ description: "MCP conformance: the specification the signer follows and where to
 
 # MCP conformance
 
-The signer speaks the [Model Context Protocol](https://modelcontextprotocol.io/specification/) with a handler written by hand (`src/serve/mcp.rs`), not an SDK ([Design decisions](design.md#the-service-is-synchronous-tiny_http-and-a-hand-written-mcp-handler) says why). With no SDK to keep it honest, this page is the record of what it implements, checked against the specification's pages on 2026-11-11.
+The signer speaks the [Model Context Protocol](https://modelcontextprotocol.io/specification/) with a handler written by hand (`src/serve/mcp.rs`), not an SDK ([Design decisions](design.md#the-service-is-synchronous-tiny_http-and-a-hand-written-mcp-handler) says why). This page is the record of what it implements, checked against the specification's pages on 2026-11-11. The Rust MCP SDK (`rmcp`) is a test-only dependency that checks the handler's messages ([Checked by the SDK](#checked-by-the-sdk)).
 
 The specification to read is the one at `modelcontextprotocol.io`, which is built from the `modelcontextprotocol/specification` repository. Other sites reproduce it; when they differ, that one is right. Each revision has its own tree, such as `https://modelcontextprotocol.io/specification/2026-07-28/`, and its TypeScript schema is the source of truth for message shapes.
 
@@ -83,11 +83,20 @@ Tool arguments are not mirrored into `Mcp-Param-*` headers: no tool marks a para
 
 When the service cannot be reached, or answers outside JSON-RPC (a wrong token is HTTP `401`), the binary writes a JSON-RPC error with code `-32603` for that request's `id`. A line that is not JSON gets `-32700` with no `id`.
 
+## Checked by the SDK
+
+`src/serve/mcp_sdk_tests.rs` reads the handler's messages back with the types of `rmcp`, the Rust MCP SDK, pinned to one version as a dev-dependency. The binaries do not link it. The tests check that:
+
+- the requests the tests send parse as the SDK's client requests, so they model a real client;
+- the results of `server/discover`, `tools/list`, `tools/call`, `resources/list` and `resources/read` parse as the SDK's types for them, with `resultType`, the caching hints and the server's name where the SDK reads them;
+- each error parses as the SDK's error with the code the SDK defines for it, and the unsupported-version error equals the one the SDK itself builds.
+
 ## Not checked
 
-- No client has been run against the service beyond the tests in `src/serve/` and `src/mcp_cli.rs`, which build the requests by hand from the specification's examples. Checking the handler's messages against the Rust MCP SDK's types is in the [Plan](plan.md).
+- The SDK's types are looser than the specification in places: fields the `2026-07-28` schema requires, such as `resultType` on a list, are optional in the SDK because it also models earlier revisions. The tests assert those fields themselves.
+- No MCP client has been run against a live service. The SDK's client is not used: it would bring an HTTP stack into the tests for little beyond what the type checks give. The tests in `src/serve/` and `src/mcp_cli.rs` send requests built by hand.
 - The specification's TypeScript schema was read only in part; the pages for the base protocol, versioning, discovery, both transports, tools, resources, pagination and the changelog were read in full.
 
 ## Keeping this page true
 
-A change to `src/serve/mcp.rs`, `src/mcp_wire.rs` or `src/mcp_cli.rs` that adds a method, a header, a status or an error code updates this page in the same change. Before supporting a new revision, read its changelog page first: it lists what was removed as well as what was added.
+A change to `src/serve/mcp.rs`, `src/mcp_wire.rs` or `src/mcp_cli.rs` that adds a method, a header, a status or an error code updates this page and `src/serve/mcp_sdk_tests.rs` in the same change. When `rmcp` is bumped, a test that stops passing is a difference between the handler and the SDK's reading of the specification: find out which is right before changing either. Before supporting a new revision, read its changelog page first: it lists what was removed as well as what was added.

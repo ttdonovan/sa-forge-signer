@@ -52,6 +52,11 @@ ureq = { version = "3.4.2", features = ["json"] }
 wincode = "0.6"
 zeroize = "1.9.0"
 
+[dev-dependencies]
+# Tests only: the Rust MCP SDK's types check the messages the hand-written handler writes. Never a
+# dependency of the binaries (docs/src/dev/design.md).
+rmcp = { version = "=3.9.0", default-features = false }
+
 [lints.rust]
 unsafe_code = "forbid"
 

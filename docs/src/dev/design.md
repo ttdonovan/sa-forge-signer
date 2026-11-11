@@ -34,7 +34,7 @@ Choices about the signer's shape that are not obvious from the code, each with i
 
 ## The service is synchronous: `tiny_http` and a hand-written MCP handler
 
-**Decision (2026-11-11, confirming how it was first built).** The service is a thread-per-request HTTP server on `tiny_http`, and `src/serve/mcp.rs` handles MCP's JSON-RPC by hand: `server/discover`, the tools and the resources, with JSON replies and no streaming. It does not use `rmcp`, the Rust MCP SDK.
+**Decision (2026-11-11, confirming how it was first built).** The service is a thread-per-request HTTP server on `tiny_http`, and `src/serve/mcp.rs` handles MCP's JSON-RPC by hand: `server/discover`, the tools and the resources, with JSON replies and no streaming. The binaries do not use `rmcp`, the Rust MCP SDK; it is a dependency of the tests only, where its types check the handler's messages ([MCP conformance](mcp-conformance.md#checked-by-the-sdk)).
 
 `rmcp` does provide both a stdio and a streamable HTTP transport. That does not change the entry above: whichever library speaks the protocol, a stdio server still runs as the agent's user, so the stdio binary would still be a client of the service.
 
@@ -45,7 +45,7 @@ Choices about the signer's shape that are not obvious from the code, each with i
 - No async runtime keeps the dependency tree small in the one process that holds the keys. `rmcp`'s HTTP server brings `tokio` and an HTTP stack with it; how many crates that adds has not been measured.
 - Each new dependency is subject to the 7-day age rule and to `cargo audit` in the gate.
 
-**Cost.** MCP features have to be written by hand as they are needed, and tool schemas are written out rather than derived from types. The handler does not stream, so a client sees nothing between calling `sign` and its report.
+**Cost.** MCP features have to be written by hand as they are needed, and tool schemas are written out rather than derived from types. The test-only `rmcp` adds about 30 crates to the lockfile (`tokio` and `chrono` among them), all subject to the gate's age and advisory checks though none reaches a binary. The handler does not stream, so a client sees nothing between calling `sign` and its report.
 
 **Reopen when** a feature is wanted that the hand-written handler cannot reasonably grow, most likely progress messages during a long `sign`. Moving the service to `rmcp` then means an async HTTP framework for the other routes, the token, Host and Origin checks as middleware, and the shutdown drain rebuilt. The MCP code is in one file so that change stays contained. What that file implements of the specification, and what it does not, is in [MCP conformance](mcp-conformance.md).
 

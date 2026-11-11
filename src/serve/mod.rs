@@ -5,6 +5,8 @@
 //! This module is the listener, the routes and their authentication; `mcp` is the MCP protocol.
 
 mod mcp;
+#[cfg(test)]
+mod mcp_sdk_tests;
 
 use std::io::Read;
 use std::sync::Arc;
