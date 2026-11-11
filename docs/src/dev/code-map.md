@@ -43,7 +43,11 @@ One crate: a library (`lib.rs`, not a public API) that each binary calls into. E
 | `policy.rs` | Every check `check` and `sign` make, as one pure `evaluate` over the request, the key's policy and `Facts`, at a stage (`Check`, `BeforeSimulation`, `AfterSimulation`); returns every result in order. New checks go here |
 | `instruction_table.rs` | The hash-checked instruction table from `apps/idl-table`, and its findings (`instructions`, `accounts`, `profile`) on a compiled message, without decoding anything |
 | `facts.rs` | The reads behind `evaluate`: the halt, the approved policy, the key's usage from the audit log, and the RPC facts, read one at a time in check order |
-| `engine.rs` | The check and sign pipeline: gather facts and evaluate, simulate, approval, the blockhash and duplicate guards, sign, send, confirm |
+| `engine/mod.rs` | The check and sign pipeline and its report: gather facts and evaluate, simulate, the cap gate, the intent, in that order |
+| `engine/fresh.rs` | The gates that may rebuild the transaction with a fresh blockhash: approval, the stale-blockhash guard and the duplicate guard |
+| `engine/approval.rs` | The `confirm` prompt at the controlling terminal |
+| `engine/send.rs` | Sending, and polling until the outcome is proven or `unknown` |
+| `engine/tests.rs` | The pipeline's tests, in one file because they share its fakes |
 | `rpc.rs` | The minimal Solana JSON-RPC client: only the calls the signer needs |
 | `keystore.rs` | The file key store: `<key_dir>/<name>.json`, 0700 directory, 0600 files; key create, import and destroy |
 | `audit.rs` | The append-only, hash-chained JSONL audit log, read back from the end for the checks (`recent`, `walk_back`), and the per-key signing lock |

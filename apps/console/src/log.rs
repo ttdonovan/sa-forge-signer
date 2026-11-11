@@ -1,5 +1,5 @@
 //! Read-only view of the signer's audit log: parse, verify the hash chain, and per-key usage.
-//! Mirrors `src/audit.rs` and `limits` in `src/engine.rs`; change them together.
+//! Mirrors `src/audit.rs` and `usage` in `src/facts.rs`; change them together.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
