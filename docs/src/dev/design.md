@@ -34,7 +34,7 @@ Choices about the signer's shape that are not obvious from the code, each with i
 
 ## The service is synchronous: `tiny_http` and a hand-written MCP handler
 
-**Decision (2026-11-11, confirming how it was first built).** The service is a thread-per-request HTTP server on `tiny_http`, and `src/serve/mcp.rs` handles MCP's JSON-RPC by hand: `initialize`, `ping`, the tools and the resources, with JSON replies and no streaming. It does not use `rmcp`, the Rust MCP SDK.
+**Decision (2026-11-11, confirming how it was first built).** The service is a thread-per-request HTTP server on `tiny_http`, and `src/serve/mcp.rs` handles MCP's JSON-RPC by hand: `server/discover`, the tools and the resources, with JSON replies and no streaming. It does not use `rmcp`, the Rust MCP SDK.
 
 `rmcp` does provide both a stdio and a streamable HTTP transport. That does not change the entry above: whichever library speaks the protocol, a stdio server still runs as the agent's user, so the stdio binary would still be a client of the service.
 
@@ -48,6 +48,16 @@ Choices about the signer's shape that are not obvious from the code, each with i
 **Cost.** MCP features have to be written by hand as they are needed, and tool schemas are written out rather than derived from types. The handler does not stream, so a client sees nothing between calling `sign` and its report.
 
 **Reopen when** a feature is wanted that the hand-written handler cannot reasonably grow, most likely progress messages during a long `sign`. Moving the service to `rmcp` then means an async HTTP framework for the other routes, the token, Host and Origin checks as middleware, and the shutdown drain rebuilt. The MCP code is in one file so that change stays contained. What that file implements of the specification, and what it does not, is in [MCP conformance](mcp-conformance.md).
+
+## One MCP revision, the latest
+
+**Decision (2026-11-11).** The signer speaks MCP `2026-07-28` and no earlier revision.
+
+**Why.** That revision is stateless: no handshake, no session, each request complete in itself. That is how the hand-written handler already worked, and it removes the parts a second revision would have forced it to keep (`initialize`, `ping`, version negotiation, two sets of error codes). Supporting both eras means carrying both behaviours in a handler with no SDK behind it.
+
+**Cost.** A client that speaks only an earlier revision cannot connect; it gets an error naming `2026-07-28` ([MCP conformance](mcp-conformance.md)).
+
+**Reopen when** a client that matters cannot be upgraded. The specification allows one server to serve both eras on the same endpoint.
 
 ## Agent guidance ships in the binary
 

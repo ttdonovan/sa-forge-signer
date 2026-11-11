@@ -56,7 +56,8 @@ One crate: a library (`lib.rs`, not a public API) that each binary calls into. E
 | `trace.rs` | Opt-in tracing on stderr from `SA_FORGE_SIGNER_LOG`: the subscriber, and what spans may never carry |
 | `bench.rs` | Test-only: `just bench`, timings of the audit log's reads on synthetic logs |
 | `serve/mod.rs` | `serve`: the listener and its drain on shutdown, JSON over HTTP at `/v1/check`, `/v1/sign` and `/v1/halt`, bearer-token auth, and the Host and Origin check |
-| `serve/mcp.rs` | MCP at `/mcp`: the JSON-RPC handler, the tools `check`, `sign`, `key_show` and `halt`, and the resources |
+| `serve/mcp.rs` | MCP at `/mcp`, revision `2026-07-28`: the JSON-RPC handler, `server/discover`, the tools `check`, `sign`, `key_show` and `halt`, and the resources ([MCP conformance](mcp-conformance.md)) |
+| `mcp_wire.rs` | What the service and the stdio relay share of that revision: its `_meta` keys, header names and error codes, and how a header value mirrors the body |
 | `skill.rs` | The agent skill built in from `skills/sa-forge-signer/`: the `llms.txt` and `llms-full.txt` texts made from it, and `skill install` |
 | `url.rs` | URL rules shared by the config, the service and the stdio proxy: https, or http only to a loopback host |
 | `text.rs` | Caller text (`summary`, `intent`, a halt `reason`): escaped and capped for a terminal, clipped for the audit log |

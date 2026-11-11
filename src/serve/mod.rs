@@ -23,6 +23,7 @@ use zeroize::Zeroizing;
 use crate::config::{Config, ServeConfig, TokenConfig};
 use crate::engine::{self, Mode};
 use crate::halt::{self, Halt};
+use crate::mcp_wire::{HEADER_METHOD, HEADER_NAME, HEADER_VERSION};
 use crate::payload::hex;
 use crate::rpc::RPC_TIMEOUT;
 use crate::url::host_name;
@@ -189,7 +190,14 @@ fn route(cfg: &Config, request: &mut Request, method: &Method, path: &str) -> (R
         "/v1/check" => http_engine(cfg, token, &body, false),
         "/v1/sign" => http_engine(cfg, token, &body, true),
         "/v1/halt" => http_halt(cfg, token, &body),
-        "/mcp" => mcp::handle(cfg, token, &body),
+        "/mcp" => {
+            let headers = mcp::Headers {
+                version: header(request, HEADER_VERSION),
+                method: header(request, HEADER_METHOD),
+                name: header(request, HEADER_NAME),
+            };
+            mcp::handle(cfg, token, &body, &headers)
+        }
         _ => reply(404, json!({"error": "not found"})),
     };
     (r, note)
@@ -354,6 +362,7 @@ mod tests {
     }
 
     use super::*;
+    use crate::mcp_wire::VERSION;
 
     fn serve() -> ServeConfig {
         ServeConfig {
@@ -431,67 +440,185 @@ mod tests {
         );
 
         let mcp = format!("{base}/mcp");
-        let init = json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}});
-        assert_eq!(post(&mcp, None, None, &init).0, 401);
-        assert_eq!(post(&mcp, Some("wrong"), None, &init).0, 401);
+        let any = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"});
+        assert_eq!(post(&mcp, None, None, &any).0, 401);
+        assert_eq!(post(&mcp, Some("wrong"), None, &any).0, 401);
         assert_eq!(
-            post(&mcp, Some("secret"), Some("evil.example"), &init).0,
+            post(&mcp, Some("secret"), Some("evil.example"), &any).0,
             403
         );
+        let get = ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .build()
+            .new_agent()
+            .get(&mcp)
+            .header("Authorization", "Bearer secret")
+            .call()
+            .unwrap();
+        assert_eq!(
+            get.status().as_u16(),
+            405,
+            "there is no stream to listen on"
+        );
 
-        let (status, body) = post(&mcp, Some("secret"), None, &init);
-        assert_eq!(status, 200);
-        let v: Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(v["result"]["protocolVersion"], "2025-06-18");
-        assert_eq!(v["result"]["serverInfo"]["name"], "sa-forge-signer");
+        let (status, v) = mcp_call(&base, "secret", "server/discover", &json!({}));
+        assert_eq!(status, 200, "{v}");
+        assert_eq!(v["result"]["resultType"], "complete");
+        assert_eq!(v["result"]["supportedVersions"], json!([VERSION]));
+        assert_eq!(
+            v["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
+            "sa-forge-signer"
+        );
 
-        let note = json!({"jsonrpc": "2.0", "method": "notifications/initialized"});
+        let note = json!({"jsonrpc": "2.0", "method": "notifications/cancelled"});
         assert_eq!(post(&mcp, Some("secret"), None, &note).0, 202);
 
-        let list = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"});
-        let v: Value = serde_json::from_str(&post(&mcp, Some("secret"), None, &list).1).unwrap();
+        let (_, v) = mcp_call(&base, "secret", "tools/list", &json!({}));
         assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 4);
+        assert_eq!(
+            (&v["result"]["resultType"], &v["result"]["cacheScope"]),
+            (&json!("complete"), &json!("private"))
+        );
+        assert!(v["result"]["ttlMs"].is_u64());
 
-        let resources = json!({"jsonrpc": "2.0", "id": 3, "method": "resources/list"});
-        let v: Value =
-            serde_json::from_str(&post(&mcp, Some("secret"), None, &resources).1).unwrap();
+        let (_, v) = mcp_call(&base, "secret", "resources/list", &json!({}));
         assert_eq!(
             v["result"]["resources"][0]["uri"],
             "sa-forge-signer://llms.txt"
         );
-        let read = json!({"jsonrpc": "2.0", "id": 4, "method": "resources/read",
-            "params": {"uri": "sa-forge-signer://llms.txt"}});
-        let v: Value = serde_json::from_str(&post(&mcp, Some("secret"), None, &read).1).unwrap();
+        let (_, v) = mcp_call(
+            &base,
+            "secret",
+            "resources/read",
+            &json!({"uri": "sa-forge-signer://llms.txt"}),
+        );
         assert!(
             v["result"]["contents"][0]["text"]
                 .as_str()
                 .unwrap()
                 .starts_with("# sa-forge-signer\n")
         );
+        let (status, v) = mcp_call(
+            &base,
+            "secret",
+            "resources/read",
+            &json!({"uri": "sa-forge-signer://nope"}),
+        );
+        assert_eq!((status, &v["error"]["code"]), (200, &json!(-32602)), "{v}");
 
-        let unknown = json!({"jsonrpc": "2.0", "id": 5, "method": "prompts/list"});
-        let v: Value = serde_json::from_str(&post(&mcp, Some("secret"), None, &unknown).1).unwrap();
-        assert_eq!(v["error"]["code"], -32601);
+        // A method this server does not have, `ping` of earlier revisions included.
+        for gone in ["prompts/list", "ping"] {
+            let (status, v) = mcp_call(&base, "secret", gone, &json!({}));
+            assert_eq!((status, &v["error"]["code"]), (404, &json!(-32601)), "{v}");
+        }
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn mcp_refuses_other_revisions_and_headers_that_do_not_mirror_the_body() {
+        let (base, dir) = live("mcp-strict");
+        let mcp = format!("{base}/mcp");
+        let parsed = |r: (u16, String)| (r.0, serde_json::from_str::<Value>(&r.1).unwrap());
+
+        // An earlier revision's handshake is told which version is spoken here.
+        let init = json!({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": "2025-11-25"}});
+        let (status, v) = parsed(post(&mcp, Some("secret"), None, &init));
+        assert_eq!((status, &v["error"]["code"]), (400, &json!(-32022)), "{v}");
+        assert_eq!(
+            v["error"]["data"],
+            json!({"supported": [VERSION], "requested": "2025-11-25"})
+        );
+
+        // No `_meta`: invalid params. With it but without the headers: a header mismatch.
+        let no_meta = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"});
+        let (status, v) = parsed(post(&mcp, Some("secret"), None, &no_meta));
+        assert_eq!((status, &v["error"]["code"]), (400, &json!(-32602)), "{v}");
+        let no_headers = json!({"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {"_meta": mcp_meta(VERSION)}});
+        let (status, v) = parsed(post(&mcp, Some("secret"), None, &no_headers));
+        assert_eq!((status, &v["error"]["code"]), (400, &json!(-32020)), "{v}");
+
+        // Headers and body agree on a version that is not spoken here.
+        let (status, v) = mcp_call_as(&base, "secret", "2025-11-25", "tools/list", &json!({}));
+        assert_eq!((status, &v["error"]["code"]), (400, &json!(-32022)), "{v}");
+        assert_eq!(v["error"]["data"]["requested"], "2025-11-25");
+
+        // An id that is null, and a batch, are not requests.
+        let null_id = json!({"jsonrpc": "2.0", "id": null, "method": "tools/list"});
+        let (status, v) = parsed(post(&mcp, Some("secret"), None, &null_id));
+        assert_eq!((status, &v["error"]["code"]), (400, &json!(-32600)), "{v}");
+        let (status, v) = parsed(post(&mcp, Some("secret"), None, &json!([no_meta])));
+        assert_eq!((status, &v["error"]["code"]), (400, &json!(-32600)), "{v}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The `_meta` every request of this revision carries.
+    fn mcp_meta(version: &str) -> Value {
+        json!({
+            "io.modelcontextprotocol/protocolVersion": version,
+            "io.modelcontextprotocol/clientInfo": {"name": "test", "version": "0"},
+            "io.modelcontextprotocol/clientCapabilities": {},
+        })
+    }
+
+    /// A request as a client of this revision sends it: `_meta` in the body, mirrored in headers.
+    fn mcp_call(base: &str, token: &str, method: &str, params: &Value) -> (u16, Value) {
+        mcp_call_as(base, token, VERSION, method, params)
+    }
+
+    fn mcp_call_as(
+        base: &str,
+        token: &str,
+        version: &str,
+        method: &str,
+        params: &Value,
+    ) -> (u16, Value) {
+        let mut params = params.clone();
+        params["_meta"] = mcp_meta(version);
+        let body = json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .build()
+            .into();
+        let mut req = agent
+            .post(&format!("{base}/mcp"))
+            .header("Authorization", &format!("Bearer {token}"))
+            .header(HEADER_VERSION, version)
+            .header(HEADER_METHOD, method);
+        let name = crate::mcp_wire::name_field(method).and_then(|f| params[f].as_str());
+        if let Some(name) = name {
+            req = req.header(HEADER_NAME, &crate::mcp_wire::encode_header(name));
+        }
+        let mut resp = req.send_json(&body).unwrap();
+        let status = resp.status().as_u16();
+        (
+            status,
+            serde_json::from_str(&resp.body_mut().read_to_string().unwrap()).unwrap(),
+        )
     }
 
     #[test]
     fn the_stdio_proxy_reaches_the_same_tools() {
         let (base, dir) = live("stdio");
-        let input = concat!(
-            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#,
-            "\n",
-            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
-            "\n",
-            r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
-            "\n",
+        let meta = mcp_meta(VERSION);
+        let input = format!(
+            "{}\n{}\n{}\n{}\n",
+            json!({"jsonrpc": "2.0", "id": 1, "method": "server/discover", "params": {"_meta": meta}}),
+            json!({"jsonrpc": "2.0", "method": "notifications/cancelled"}),
+            json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                "params": {"name": "key_show", "arguments": {"name": "other"}, "_meta": meta}}),
+            // A client of an earlier revision probing with its handshake.
+            json!({"jsonrpc": "2.0", "id": 3, "method": "initialize", "params": {"protocolVersion": "2025-11-25"}}),
         );
-        let out = crate::mcp_cli::tests::piped(input, crate::mcp_cli::tests::live(&base, "secret"));
-        assert_eq!(out.len(), 2, "{out:?}");
-        assert_eq!(out[0]["result"]["serverInfo"]["name"], "sa-forge-signer");
-        assert_eq!(out[1]["result"]["tools"].as_array().unwrap().len(), 4);
+        let out =
+            crate::mcp_cli::tests::piped(&input, crate::mcp_cli::tests::live(&base, "secret"));
+        assert_eq!(out.len(), 3, "{out:?}");
+        assert_eq!(out[0]["result"]["supportedVersions"], json!([VERSION]));
+        // The relay sent Mcp-Name for the tool call, or the service would have refused it.
+        assert_eq!(out[1]["result"]["isError"], true, "{out:?}");
+        assert_eq!(out[2]["error"]["code"], -32022);
         let denied =
-            crate::mcp_cli::tests::piped(input, crate::mcp_cli::tests::live(&base, "wrong"));
+            crate::mcp_cli::tests::piped(&input, crate::mcp_cli::tests::live(&base, "wrong"));
         assert!(
             denied[0]["error"]["message"]
                 .as_str()
@@ -674,23 +801,21 @@ mod tests {
         );
         assert_eq!(status, 404);
 
-        let call = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-            "params": {"name": "halt", "arguments": {"key": "k", "reason": "again"}}});
-        let v: Value =
-            serde_json::from_str(&post(&format!("{base}/mcp"), Some("secret"), None, &call).1)
-                .unwrap();
+        let tool = |name: &str, arguments: Value| {
+            mcp_call(
+                &base,
+                "secret",
+                "tools/call",
+                &json!({"name": name, "arguments": arguments}),
+            )
+            .1
+        };
+        let v = tool("halt", json!({"key": "k", "reason": "again"}));
         assert_eq!(v["result"]["isError"], false, "{v}");
-        let denied = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-            "params": {"name": "halt", "arguments": {"key": "other", "reason": "x"}}});
-        let v: Value =
-            serde_json::from_str(&post(&format!("{base}/mcp"), Some("secret"), None, &denied).1)
-                .unwrap();
+        assert_eq!(v["result"]["resultType"], "complete");
+        let v = tool("halt", json!({"key": "other", "reason": "x"}));
         assert_eq!(v["result"]["isError"], true);
-        let resume = json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
-            "params": {"name": "resume", "arguments": {"key": "k"}}});
-        let v: Value =
-            serde_json::from_str(&post(&format!("{base}/mcp"), Some("secret"), None, &resume).1)
-                .unwrap();
+        let v = tool("resume", json!({"key": "k"}));
         assert_eq!(v["error"]["code"], -32602, "there is no resume tool");
         assert!(
             crate::halt::active(&home.cfg.state_dir, "k")
