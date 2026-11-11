@@ -47,7 +47,7 @@ Choices about the signer's shape that are not obvious from the code, each with i
 
 **Cost.** MCP features have to be written by hand as they are needed, and tool schemas are written out rather than derived from types. The handler does not stream, so a client sees nothing between calling `sign` and its report.
 
-**Reopen when** a feature is wanted that the hand-written handler cannot reasonably grow, most likely progress messages during a long `sign`. Moving the service to `rmcp` then means an async HTTP framework for the other routes, the token, Host and Origin checks as middleware, and the shutdown drain rebuilt. The MCP code is in one file so that change stays contained.
+**Reopen when** a feature is wanted that the hand-written handler cannot reasonably grow, most likely progress messages during a long `sign`. Moving the service to `rmcp` then means an async HTTP framework for the other routes, the token, Host and Origin checks as middleware, and the shutdown drain rebuilt. The MCP code is in one file so that change stays contained. What that file implements of the specification, and what it does not, is in [MCP conformance](mcp-conformance.md).
 
 ## Agent guidance ships in the binary
 
