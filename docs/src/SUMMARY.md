@@ -19,6 +19,7 @@
 
 - [Contributing](dev/contributing.md)
 - [Code map](dev/code-map.md)
+- [Design decisions](dev/design.md)
 - [Plan](dev/plan.md)
 - [Hardening proposals](dev/hardening.md)
 - [RPC calls and latency](dev/rpc-latency.md)

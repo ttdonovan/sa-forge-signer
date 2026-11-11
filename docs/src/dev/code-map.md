@@ -13,7 +13,7 @@ description: "Where things live: the repository layout (src, apps, docs, scripts
 | `config.example.toml` | The annotated example config, embedded in the binary and written by `config init` |
 | `skills/sa-forge-signer/` | The skill that teaches an agent to use the MCP tools (`SKILL.md` and `references/tools.md`), embedded in the binaries, served as MCP resources and written by `sa-forge-signer-mcp skill install` ([Resources and the skill](../serve.md#resources-and-the-skill)) |
 | `apps/` | Extras a human runs beside the signer, each its own crate and workspace, kept out of the signer's build ([Building an app](apps.md)): `apps/console/`, `apps/grant/` and `apps/idl-table/` |
-| `docs/` | This book: `docs/src/` for chapters, `docs/src/dev/` for working on the signer, `docs/src/apps/` for the apps ([Writing the docs](writing-docs.md)) |
+| `docs/` | This book (choices about the signer's shape are in [Design decisions](design.md)): `docs/src/` for chapters, `docs/src/dev/` for working on the signer, `docs/src/apps/` for the apps ([Writing the docs](writing-docs.md)) |
 | `justfile` | Recipes: `just check` (the gate), plus the `docs` and `apps` modules in `docs/justfile` and `apps/justfile` (`just docs check`, `just apps console`) |
 | `scripts/ci/` | `check.sh` (the gate run by `just check` and CI), `crate-age.sh` (dependency age), `docs-check.sh` (`just docs check`), `docker-toolchain.sh` (the Dockerfile's Rust matches `rust-toolchain.toml`) |
 | `scripts/installer/` | `install.sh`: installs, updates or uninstalls the signer and the console on a host ([Install and update](../install.md)) |

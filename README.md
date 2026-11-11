@@ -37,8 +37,31 @@ sa-forge-signer key new alice-session --class session
 
 sa-forge-signer check payload.json                  # checks + simulation, never signs
 sa-forge-signer sign --intent "scan round" payload.json
-sa-forge-signer-serve                               # HTTP and MCP on 127.0.0.1:8790
 ```
+
+## Using it from an agent
+
+An agent does not run the command line above: it talks to the long-running service, `sa-forge-signer-serve`, with a bearer token that lists the keys it may use. [Getting started](https://ttdonovan.github.io/sa-forge-signer/getting-started.html) walks through it end to end, and [Serving over HTTP and MCP](https://ttdonovan.github.io/sa-forge-signer/serve.html) is the reference for the routes, the tools and the token.
+
+```sh
+# Create a token; prints its sha256 and a [[serve.tokens]] snippet for the config
+sa-forge-signer token new agent --out ~/.config/sa-forge-signer/agent.token
+
+# Run the service as the signer's user, not the agent's: HTTP and MCP on 127.0.0.1:8790
+sa-forge-signer-serve
+
+# Then add it to the agent's MCP client, over HTTP...
+claude mcp add --transport http sa-forge-signer http://127.0.0.1:8790/mcp \
+  --header "Authorization: Bearer $(cat ~/.config/sa-forge-signer/agent.token)"
+
+# ...or over stdio, for a client that only starts its servers as child processes
+claude mcp add sa-forge-signer -- sa-forge-signer-mcp --token-file ~/.config/sa-forge-signer/agent.token
+
+# Optional: install the skill that teaches the agent the tools and what to do with each outcome
+sa-forge-signer-mcp skill install
+```
+
+The agent then passes each forge-mcp `build_*` payload to the `check` tool, then `sign`. The service also serves that guidance as MCP resources, starting at `sa-forge-signer://llms.txt`. `sa-forge-signer-mcp` is a client of the running service: it holds the token, never a key. The prebuilt archive does not carry it yet; `cargo install` builds it with the other two.
 
 ## Docs
 
@@ -51,7 +74,8 @@ sa-forge-signer-serve                               # HTTP and MCP on 127.0.0.1:
 | [Checking and signing](https://ttdonovan.github.io/sa-forge-signer/check-and-sign.html) | The CLI, the JSON report, outcomes and exit codes, retrying safely |
 | [Key lifecycle](https://ttdonovan.github.io/sa-forge-signer/key-lifecycle.html) | Create, grant, fund, use, revoke |
 | [Configuration](https://ttdonovan.github.io/sa-forge-signer/configuration.html) | The annotated example config |
-| [Serving over HTTP and MCP](https://ttdonovan.github.io/sa-forge-signer/serve.html) | `serve`, tokens, shutdown, adding it to Claude Code |
+| [Serving over HTTP and MCP](https://ttdonovan.github.io/sa-forge-signer/serve.html) | The service, its routes and MCP tools, tokens, shutdown, adding it to Claude Code over HTTP or stdio, the agent skill |
+| [Design decisions](https://ttdonovan.github.io/sa-forge-signer/dev/design.html) | Why three binaries, why the stdio MCP is a client of the service, why not an MCP SDK |
 | [Running in Docker](https://ttdonovan.github.io/sa-forge-signer/docker.html) | The image and its mounts |
 | [Security](https://ttdonovan.github.io/sa-forge-signer/security.html) | Threat model, limits, reporting a vulnerability |
 | [Contributing](https://ttdonovan.github.io/sa-forge-signer/dev/contributing.html) | The check gate, commits, releases |
