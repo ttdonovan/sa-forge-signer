@@ -1,6 +1,12 @@
 //! `serve`: a long-running signer. JSON over HTTP at /v1/check, /v1/sign and /v1/halt, and MCP (JSON
 //! responses, no SSE) at /mcp. Every route but /health needs a bearer token from `[[serve.tokens]]`.
 //! A token can halt its keys but never resume them: only the CLI at a terminal can.
+//!
+//! This module is the listener, the routes and their authentication; `mcp` is the MCP protocol.
+
+mod mcp;
+#[cfg(test)]
+mod mcp_sdk_tests;
 
 use std::io::Read;
 use std::sync::Arc;
@@ -17,10 +23,12 @@ use tiny_http::{Header, Method, Request, Response};
 use zeroize::Zeroizing;
 
 use crate::config::{Config, ServeConfig, TokenConfig};
-use crate::engine::{self, Mode, Outcome};
+use crate::engine::{self, Mode};
 use crate::halt::{self, Halt};
+use crate::mcp_wire::{HEADER_METHOD, HEADER_NAME, HEADER_VERSION};
 use crate::payload::hex;
-use crate::rpc::{RPC_TIMEOUT, Rpc};
+use crate::rpc::RPC_TIMEOUT;
+use crate::url::host_name;
 
 const MAX_BODY: u64 = 1024 * 1024;
 /// Longest halt reason a token may write to the audit log, in characters.
@@ -35,8 +43,6 @@ const MAX_IN_FLIGHT: usize = 32;
 const DRAIN_DEADLINE: Duration =
     Duration::from_secs(engine::CONFIRM_DEADLINE.as_secs() + 4 * RPC_TIMEOUT.as_secs() + 10);
 const DRAIN_POLL: Duration = Duration::from_millis(100);
-const MCP_LATEST: &str = "2025-11-25";
-const MCP_VERSIONS: [&str; 3] = [MCP_LATEST, "2025-06-18", "2025-03-26"];
 
 pub fn run(cfg: Config) -> Result<()> {
     let Some(serve) = cfg.serve.as_ref() else {
@@ -186,7 +192,14 @@ fn route(cfg: &Config, request: &mut Request, method: &Method, path: &str) -> (R
         "/v1/check" => http_engine(cfg, token, &body, false),
         "/v1/sign" => http_engine(cfg, token, &body, true),
         "/v1/halt" => http_halt(cfg, token, &body),
-        "/mcp" => mcp(cfg, token, &body),
+        "/mcp" => {
+            let headers = mcp::Headers {
+                version: header(request, HEADER_VERSION),
+                method: header(request, HEADER_METHOD),
+                name: header(request, HEADER_NAME),
+            };
+            mcp::handle(cfg, token, &body, &headers)
+        }
         _ => reply(404, json!({"error": "not found"})),
     };
     (r, note)
@@ -211,15 +224,6 @@ fn check_origin(serve: &ServeConfig, request: &Request) -> Result<(), String> {
         }
     }
     Ok(())
-}
-
-/// The host part of `host[:port]` or `[v6]:port`.
-pub fn host_name(authority: &str) -> &str {
-    let authority = authority.split('/').next().unwrap_or_default();
-    if let Some(rest) = authority.strip_prefix('[') {
-        return rest.split(']').next().unwrap_or_default();
-    }
-    authority.split(':').next().unwrap_or_default()
 }
 
 fn header(request: &Request, name: &'static str) -> Option<String> {
@@ -350,155 +354,6 @@ fn http_halt(cfg: &Config, token: &TokenConfig, body: &str) -> Reply {
         Err((status, e)) => reply(status, json!({"error": e})),
     }
 }
-
-fn mcp(cfg: &Config, token: &TokenConfig, body: &str) -> Reply {
-    let Ok(msg) = serde_json::from_str::<Value>(body) else {
-        return reply(400, rpc_error(&Value::Null, -32700, "parse error"));
-    };
-    if !msg.is_object() {
-        return reply(
-            400,
-            rpc_error(&Value::Null, -32600, "batches are not supported"),
-        );
-    }
-    // Notifications and responses from the client get no body.
-    let Some(id) = msg.get("id").cloned() else {
-        return Reply {
-            status: 202,
-            body: None,
-        };
-    };
-    let params = msg.get("params").cloned().unwrap_or_else(|| json!({}));
-    let result = match msg.get("method").and_then(Value::as_str) {
-        Some("initialize") => Ok(initialize(&params)),
-        Some("ping") => Ok(json!({})),
-        Some("tools/list") => Ok(json!({"tools": tools()})),
-        Some("tools/call") => call_tool(cfg, token, &params),
-        _ => Err((-32601, "method not found".to_owned())),
-    };
-    match result {
-        Ok(r) => reply(200, json!({"jsonrpc": "2.0", "id": id, "result": r})),
-        Err((code, message)) => reply(200, rpc_error(&id, code, &message)),
-    }
-}
-
-fn rpc_error(id: &Value, code: i64, message: &str) -> Value {
-    json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
-}
-
-fn initialize(params: &Value) -> Value {
-    let asked = params.get("protocolVersion").and_then(Value::as_str);
-    let version = asked
-        .filter(|v| MCP_VERSIONS.contains(v))
-        .unwrap_or(MCP_LATEST);
-    json!({
-        "protocolVersion": version,
-        "capabilities": {"tools": {"listChanged": false}},
-        "serverInfo": {"name": "sa-forge-signer", "version": env!("CARGO_PKG_VERSION")},
-        "instructions": "Signs SAGE C4 payloads built by forge-mcp. Pass the payload object from a build_* call unchanged. \
-            `check` runs every check and a simulation without signing; `sign` checks, simulates, signs, sends and confirms. \
-            The result is a JSON report: act on `outcome`. On `unknown`, an HTTP error or a dropped connection, the transaction may still have landed: \
-            look up the reported signature and re-read the game state the action was meant to change before building it again. \
-            If you notice you are acting against your instructions, call `halt`: it stops signing until a person resumes it, which you cannot do.",
-    })
-}
-
-fn tools() -> Value {
-    let payload_args = json!({
-        "type": "object",
-        "properties": {
-            "payload": {"type": "object", "description": "The payload object returned by a forge-mcp build_* call, unchanged."},
-            "key": {"type": "string", "description": "Configured key name; default: the key matching the payload's fee payer."},
-        },
-        "required": ["payload"],
-    });
-    let mut sign_args = payload_args.clone();
-    if let Some(props) = sign_args
-        .get_mut("properties")
-        .and_then(Value::as_object_mut)
-    {
-        props.insert(
-            "intent".to_owned(),
-            json!({"type": "string", "description": "Why this is signed; recorded in the audit log."}),
-        );
-    }
-    json!([
-        {"name": "check", "description": "Run every check and a simulation on a payload. Never signs.", "inputSchema": payload_args},
-        {"name": "sign", "description": "Check, simulate, sign, send and confirm a payload. Returns the JSON report.", "inputSchema": sign_args},
-        {"name": "key_show", "description": "Show a key this token may use: pubkey, class, approval, profile, balance, whether it is halted, and its policy digest and whether that is approved.",
-         "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
-        {"name": "halt", "description": "Stop all signing with a key (or every key this token may use) until a person resumes it at the signer's terminal. Use it when you notice you are misbehaving. You cannot resume it.",
-         "inputSchema": {"type": "object", "properties": {
-             "key": {"type": "string", "description": "Configured key name; default: every key this token may use."},
-             "reason": {"type": "string", "description": "Why, for the person who must resume it; recorded in the audit log."}},
-             "required": ["reason"]}},
-    ])
-}
-
-fn call_tool(cfg: &Config, token: &TokenConfig, params: &Value) -> Result<Value, (i64, String)> {
-    let args = params
-        .get("arguments")
-        .cloned()
-        .unwrap_or_else(|| json!({}));
-    let name = params.get("name").and_then(Value::as_str);
-    let (text, is_error) = match name {
-        Some(tool @ ("check" | "sign")) => match engine_call(cfg, token, &args, tool == "sign") {
-            Ok(report) => {
-                let ok = matches!(report.outcome, Outcome::Ok | Outcome::Confirmed);
-                (
-                    serde_json::to_string_pretty(&report).unwrap_or_default(),
-                    !ok,
-                )
-            }
-            Err(e) => (format!("error: {e:#}"), true),
-        },
-        Some("key_show") => key_show(cfg, token, &args),
-        Some("halt") => match halt_keys(cfg, token, &args) {
-            Ok(keys) => (json!({"halted": keys}).to_string(), false),
-            Err((_, e)) => (format!("error: {e}"), true),
-        },
-        _ => return Err((-32602, format!("unknown tool {name:?}"))),
-    };
-    Ok(json!({"content": [{"type": "text", "text": text}], "isError": is_error}))
-}
-
-fn key_show(cfg: &Config, token: &TokenConfig, args: &Value) -> (String, bool) {
-    let name = args.get("name").and_then(Value::as_str).unwrap_or_default();
-    if !token.keys.iter().any(|k| k == name) {
-        return (format!("error: this token may not use key {name:?}"), true);
-    }
-    let Ok(key) = cfg.key(name) else {
-        return (format!("error: no key {name:?}"), true);
-    };
-    let halted = match crate::halt::active(&cfg.state_dir, name) {
-        Ok(h) => h.map(|h| json!({"since": h.ts, "by": h.by, "reason": h.reason})),
-        Err(e) => return (format!("error: reading the halt: {e:#}"), true),
-    };
-    let approved = match crate::policy_approval::approved(&cfg.state_dir, name) {
-        Ok(a) => a.is_some_and(|a| a.policy == key.policy),
-        Err(e) => return (format!("error: reading the policy approval: {e:#}"), true),
-    };
-    let balance = Rpc::new(&cfg.rpc_url).balance(&key.pubkey).ok();
-    let info = json!({
-        "name": key.name,
-        "pubkey": key.pubkey.to_string(),
-        "class": format!("{:?}", key.class).to_lowercase(),
-        "approval": format!("{:?}", key.approval).to_lowercase(),
-        "profile": key.profile.map(|p| p.to_string()),
-        "balance_lamports": balance,
-        "halted": halted,
-        "policy": {
-            "digest": key.policy,
-            "approval_required": key.require_policy_approval,
-            "approved": approved,
-        },
-    });
-    (
-        serde_json::to_string_pretty(&info).unwrap_or_default(),
-        false,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     #[test]
@@ -509,6 +364,7 @@ mod tests {
     }
 
     use super::*;
+    use crate::mcp_wire::VERSION;
 
     fn serve() -> ServeConfig {
         ServeConfig {
@@ -523,31 +379,11 @@ mod tests {
     }
 
     #[test]
-    fn host_names() {
-        assert_eq!(host_name("127.0.0.1:8790"), "127.0.0.1");
-        assert_eq!(host_name("localhost"), "localhost");
-        assert_eq!(host_name("[::1]:8790"), "::1");
-        assert_eq!(host_name("evil.example:80/x"), "evil.example");
-    }
-
-    #[test]
     fn tokens_match_by_hash_only() {
         let s = serve();
         assert_eq!(token_for(&s, "secret").map(|t| t.name.as_str()), Some("t"));
         assert!(token_for(&s, "Secret").is_none());
         assert!(token_for(&s, "").is_none());
-    }
-
-    #[test]
-    fn initialize_negotiates_the_version() {
-        assert_eq!(
-            initialize(&json!({"protocolVersion": "2025-06-18"}))["protocolVersion"],
-            "2025-06-18"
-        );
-        assert_eq!(
-            initialize(&json!({"protocolVersion": "1999-01-01"}))["protocolVersion"],
-            MCP_LATEST
-        );
     }
 
     /// A live server on a random port, with keys `mine` (in the token) and `other` (not).
@@ -606,30 +442,192 @@ mod tests {
         );
 
         let mcp = format!("{base}/mcp");
-        let init = json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}});
-        assert_eq!(post(&mcp, None, None, &init).0, 401);
-        assert_eq!(post(&mcp, Some("wrong"), None, &init).0, 401);
+        let any = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"});
+        assert_eq!(post(&mcp, None, None, &any).0, 401);
+        assert_eq!(post(&mcp, Some("wrong"), None, &any).0, 401);
         assert_eq!(
-            post(&mcp, Some("secret"), Some("evil.example"), &init).0,
+            post(&mcp, Some("secret"), Some("evil.example"), &any).0,
             403
         );
+        let get = ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .build()
+            .new_agent()
+            .get(&mcp)
+            .header("Authorization", "Bearer secret")
+            .call()
+            .unwrap();
+        assert_eq!(
+            get.status().as_u16(),
+            405,
+            "there is no stream to listen on"
+        );
 
-        let (status, body) = post(&mcp, Some("secret"), None, &init);
-        assert_eq!(status, 200);
-        let v: Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(v["result"]["protocolVersion"], "2025-06-18");
-        assert_eq!(v["result"]["serverInfo"]["name"], "sa-forge-signer");
+        let (status, v) = mcp_call(&base, "secret", "server/discover", &json!({}));
+        assert_eq!(status, 200, "{v}");
+        assert_eq!(v["result"]["resultType"], "complete");
+        assert_eq!(v["result"]["supportedVersions"], json!([VERSION]));
+        assert_eq!(
+            v["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
+            "sa-forge-signer"
+        );
 
-        let note = json!({"jsonrpc": "2.0", "method": "notifications/initialized"});
+        let note = json!({"jsonrpc": "2.0", "method": "notifications/cancelled"});
         assert_eq!(post(&mcp, Some("secret"), None, &note).0, 202);
 
-        let list = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"});
-        let v: Value = serde_json::from_str(&post(&mcp, Some("secret"), None, &list).1).unwrap();
+        let (_, v) = mcp_call(&base, "secret", "tools/list", &json!({}));
         assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 4);
+        assert_eq!(
+            (&v["result"]["resultType"], &v["result"]["cacheScope"]),
+            (&json!("complete"), &json!("private"))
+        );
+        assert!(v["result"]["ttlMs"].is_u64());
 
-        let unknown = json!({"jsonrpc": "2.0", "id": 3, "method": "resources/list"});
-        let v: Value = serde_json::from_str(&post(&mcp, Some("secret"), None, &unknown).1).unwrap();
-        assert_eq!(v["error"]["code"], -32601);
+        let (_, v) = mcp_call(&base, "secret", "resources/list", &json!({}));
+        assert_eq!(
+            v["result"]["resources"][0]["uri"],
+            "sa-forge-signer://llms.txt"
+        );
+        let (_, v) = mcp_call(
+            &base,
+            "secret",
+            "resources/read",
+            &json!({"uri": "sa-forge-signer://llms.txt"}),
+        );
+        assert!(
+            v["result"]["contents"][0]["text"]
+                .as_str()
+                .unwrap()
+                .starts_with("# sa-forge-signer\n")
+        );
+        let (status, v) = mcp_call(
+            &base,
+            "secret",
+            "resources/read",
+            &json!({"uri": "sa-forge-signer://nope"}),
+        );
+        assert_eq!((status, &v["error"]["code"]), (200, &json!(-32602)), "{v}");
+
+        // A method this server does not have, `ping` of earlier revisions included.
+        for gone in ["prompts/list", "ping"] {
+            let (status, v) = mcp_call(&base, "secret", gone, &json!({}));
+            assert_eq!((status, &v["error"]["code"]), (404, &json!(-32601)), "{v}");
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn mcp_refuses_other_revisions_and_headers_that_do_not_mirror_the_body() {
+        let (base, dir) = live("mcp-strict");
+        let mcp = format!("{base}/mcp");
+        let parsed = |r: (u16, String)| (r.0, serde_json::from_str::<Value>(&r.1).unwrap());
+
+        // An earlier revision's handshake is told which version is spoken here.
+        let init = json!({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": "2025-11-25"}});
+        let (status, v) = parsed(post(&mcp, Some("secret"), None, &init));
+        assert_eq!((status, &v["error"]["code"]), (400, &json!(-32022)), "{v}");
+        assert_eq!(
+            v["error"]["data"],
+            json!({"supported": [VERSION], "requested": "2025-11-25"})
+        );
+
+        // No `_meta`: invalid params. With it but without the headers: a header mismatch.
+        let no_meta = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"});
+        let (status, v) = parsed(post(&mcp, Some("secret"), None, &no_meta));
+        assert_eq!((status, &v["error"]["code"]), (400, &json!(-32602)), "{v}");
+        let no_headers = json!({"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {"_meta": mcp_meta(VERSION)}});
+        let (status, v) = parsed(post(&mcp, Some("secret"), None, &no_headers));
+        assert_eq!((status, &v["error"]["code"]), (400, &json!(-32020)), "{v}");
+
+        // Headers and body agree on a version that is not spoken here.
+        let (status, v) = mcp_call_as(&base, "secret", "2025-11-25", "tools/list", &json!({}));
+        assert_eq!((status, &v["error"]["code"]), (400, &json!(-32022)), "{v}");
+        assert_eq!(v["error"]["data"]["requested"], "2025-11-25");
+
+        // An id that is null, and a batch, are not requests.
+        let null_id = json!({"jsonrpc": "2.0", "id": null, "method": "tools/list"});
+        let (status, v) = parsed(post(&mcp, Some("secret"), None, &null_id));
+        assert_eq!((status, &v["error"]["code"]), (400, &json!(-32600)), "{v}");
+        let (status, v) = parsed(post(&mcp, Some("secret"), None, &json!([no_meta])));
+        assert_eq!((status, &v["error"]["code"]), (400, &json!(-32600)), "{v}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The `_meta` every request of this revision carries.
+    fn mcp_meta(version: &str) -> Value {
+        json!({
+            "io.modelcontextprotocol/protocolVersion": version,
+            "io.modelcontextprotocol/clientInfo": {"name": "test", "version": "0"},
+            "io.modelcontextprotocol/clientCapabilities": {},
+        })
+    }
+
+    /// A request as a client of this revision sends it: `_meta` in the body, mirrored in headers.
+    fn mcp_call(base: &str, token: &str, method: &str, params: &Value) -> (u16, Value) {
+        mcp_call_as(base, token, VERSION, method, params)
+    }
+
+    fn mcp_call_as(
+        base: &str,
+        token: &str,
+        version: &str,
+        method: &str,
+        params: &Value,
+    ) -> (u16, Value) {
+        let mut params = params.clone();
+        params["_meta"] = mcp_meta(version);
+        let body = json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .build()
+            .into();
+        let mut req = agent
+            .post(&format!("{base}/mcp"))
+            .header("Authorization", &format!("Bearer {token}"))
+            .header(HEADER_VERSION, version)
+            .header(HEADER_METHOD, method);
+        let name = crate::mcp_wire::name_field(method).and_then(|f| params[f].as_str());
+        if let Some(name) = name {
+            req = req.header(HEADER_NAME, &crate::mcp_wire::encode_header(name));
+        }
+        let mut resp = req.send_json(&body).unwrap();
+        let status = resp.status().as_u16();
+        (
+            status,
+            serde_json::from_str(&resp.body_mut().read_to_string().unwrap()).unwrap(),
+        )
+    }
+
+    #[test]
+    fn the_stdio_proxy_reaches_the_same_tools() {
+        let (base, dir) = live("stdio");
+        let meta = mcp_meta(VERSION);
+        let input = format!(
+            "{}\n{}\n{}\n{}\n",
+            json!({"jsonrpc": "2.0", "id": 1, "method": "server/discover", "params": {"_meta": meta}}),
+            json!({"jsonrpc": "2.0", "method": "notifications/cancelled"}),
+            json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                "params": {"name": "key_show", "arguments": {"name": "other"}, "_meta": meta}}),
+            // A client of an earlier revision probing with its handshake.
+            json!({"jsonrpc": "2.0", "id": 3, "method": "initialize", "params": {"protocolVersion": "2025-11-25"}}),
+        );
+        let out =
+            crate::mcp_cli::tests::piped(&input, crate::mcp_cli::tests::live(&base, "secret"));
+        assert_eq!(out.len(), 3, "{out:?}");
+        assert_eq!(out[0]["result"]["supportedVersions"], json!([VERSION]));
+        // The relay sent Mcp-Name for the tool call, or the service would have refused it.
+        assert_eq!(out[1]["result"]["isError"], true, "{out:?}");
+        assert_eq!(out[2]["error"]["code"], -32022);
+        let denied =
+            crate::mcp_cli::tests::piped(&input, crate::mcp_cli::tests::live(&base, "wrong"));
+        assert!(
+            denied[0]["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("bearer token"),
+            "{denied:?}"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -805,23 +803,21 @@ mod tests {
         );
         assert_eq!(status, 404);
 
-        let call = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-            "params": {"name": "halt", "arguments": {"key": "k", "reason": "again"}}});
-        let v: Value =
-            serde_json::from_str(&post(&format!("{base}/mcp"), Some("secret"), None, &call).1)
-                .unwrap();
+        let tool = |name: &str, arguments: Value| {
+            mcp_call(
+                &base,
+                "secret",
+                "tools/call",
+                &json!({"name": name, "arguments": arguments}),
+            )
+            .1
+        };
+        let v = tool("halt", json!({"key": "k", "reason": "again"}));
         assert_eq!(v["result"]["isError"], false, "{v}");
-        let denied = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-            "params": {"name": "halt", "arguments": {"key": "other", "reason": "x"}}});
-        let v: Value =
-            serde_json::from_str(&post(&format!("{base}/mcp"), Some("secret"), None, &denied).1)
-                .unwrap();
+        assert_eq!(v["result"]["resultType"], "complete");
+        let v = tool("halt", json!({"key": "other", "reason": "x"}));
         assert_eq!(v["result"]["isError"], true);
-        let resume = json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
-            "params": {"name": "resume", "arguments": {"key": "k"}}});
-        let v: Value =
-            serde_json::from_str(&post(&format!("{base}/mcp"), Some("secret"), None, &resume).1)
-                .unwrap();
+        let v = tool("resume", json!({"key": "k"}));
         assert_eq!(v["error"]["code"], -32602, "there is no resume tool");
         assert!(
             crate::halt::active(&home.cfg.state_dir, "k")
@@ -842,7 +838,7 @@ mod tests {
         let cfg = &home.cfg;
         let token = &cfg.serve.as_ref().unwrap().tokens[0];
         let show = || {
-            let (text, err) = key_show(cfg, token, &json!({"name": "k"}));
+            let (text, err) = mcp::key_show(cfg, token, &json!({"name": "k"}));
             assert!(!err, "{text}");
             serde_json::from_str::<Value>(&text).unwrap()
         };
@@ -878,7 +874,7 @@ mod tests {
         );
         std::fs::write(cfg.state_dir.join("halts/all.json"), "{").unwrap();
         assert!(
-            key_show(cfg, token, &json!({"name": "k"})).1,
+            mcp::key_show(cfg, token, &json!({"name": "k"})).1,
             "an unreadable halt is an error"
         );
     }
@@ -893,18 +889,5 @@ mod tests {
             access_line(true, &Method::Post, "/v1/sign", 200, "token=agent"),
             None
         );
-    }
-
-    #[test]
-    fn tools_are_listed_with_schemas() {
-        let names: Vec<String> = tools()
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|t| t["name"].as_str().unwrap().to_owned())
-            .collect();
-        assert_eq!(names, ["check", "sign", "key_show", "halt"]);
-        assert!(tools()[1]["inputSchema"]["properties"]["intent"].is_object());
-        assert!(tools()[0]["inputSchema"]["properties"]["intent"].is_null());
     }
 }

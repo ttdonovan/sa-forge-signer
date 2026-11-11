@@ -8,7 +8,7 @@ Not published on crates.io: install from GitHub, pinned to a release tag (`vX.Y.
 
 ## Install script
 
-[`scripts/installer/install.sh`](../../scripts/installer/install.sh) installs or updates the signer and the [console](apps/console.md) on the host it runs on, into `~/.local/bin` by default. It downloads the prebuilt signer for the host and verifies it as below (the attestation needs `gh`), or builds it from the tag with cargo when there is no prebuilt binary for the host. It builds the console with cargo from the same tag, and skips it for a tag that does not include it. It also links `sfs` to `sa-forge-signer` and `sfs-console` to `sa-forge-signer-console` in the same directory (`--no-alias` skips them), and never replaces an existing file or link of those names. Run it again to update: it skips a signer that is already at that version.
+[`scripts/installer/install.sh`](../../scripts/installer/install.sh) installs or updates the signer and the [console](apps/console.md) on the host it runs on, into `~/.local/bin` by default. The signer is two binaries from one release: `sa-forge-signer`, the command line, and `sa-forge-signer-serve`, the [service](serve.md). It downloads the prebuilt signer for the host and verifies it as below (the attestation needs `gh`), or builds it from the tag with cargo when there is no prebuilt binary for the host. It builds the console with cargo from the same tag, and skips it for a tag that does not include it. It also links `sfs` to `sa-forge-signer`, `sfs-serve` to `sa-forge-signer-serve` and `sfs-console` to `sa-forge-signer-console` in the same directory (`--no-alias` skips them), and never replaces an existing file or link of those names. Run it again to update: it skips a signer that is already at that version.
 
 ```sh
 # From a checkout, or download the script from the tag you want and read it first
@@ -20,11 +20,11 @@ scripts/installer/install.sh --help             # --prefix, --from-source, --con
 
 It installs binaries only. The config, keys and audit log stay in `~/.config/sa-forge-signer/` (see [Configuration](configuration.md)). Nothing about logging is set at install: tracing is switched on per run with `SA_FORGE_SIGNER_LOG` in the environment of whatever starts the signer, such as your shell, the `serve` service, a container or an MCP client's config ([Tracing](configuration.md#tracing)).
 
-`--uninstall` removes both binaries and their links, and never touches the config, keys or audit log. While key files remain it keeps the signer, which `key destroy` needs, and lists the steps to retire them (see [Key lifecycle](key-lifecycle.md)): revoke each grant, `sa-forge-signer key destroy <name>`, then remove the config directory. Run it again afterwards, or add `--force` to remove the signer anyway.
+`--uninstall` removes the binaries and their links, and never touches the config, keys or audit log. While key files remain it keeps the signer, which `key destroy` needs, and lists the steps to retire them (see [Key lifecycle](key-lifecycle.md)): revoke each grant, `sa-forge-signer key destroy <name>`, then remove the config directory. Run it again afterwards, or add `--force` to remove the signer anyway.
 
 ## Prebuilt binary
 
-Each [release](https://github.com/ttdonovan/sa-forge-signer/releases) carries `sa-forge-signer-vX.Y.Z-<target>.tar.gz` for `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl` (static, any distribution), `aarch64-apple-darwin` and `x86_64-apple-darwin`, a `SHA256SUMS` file, and a build provenance attestation. Verify before you run it:
+Each [release](https://github.com/ttdonovan/sa-forge-signer/releases) carries `sa-forge-signer-vX.Y.Z-<target>.tar.gz` for `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl` (static, any distribution), `aarch64-apple-darwin` and `x86_64-apple-darwin`, a `SHA256SUMS` file, and a build provenance attestation. The archive holds both binaries, `sa-forge-signer` and `sa-forge-signer-serve`. Verify before you run it:
 
 ```sh
 gh release download vX.Y.Z --repo ttdonovan/sa-forge-signer --pattern '*-aarch64-apple-darwin.tar.gz' --pattern SHA256SUMS
@@ -48,7 +48,7 @@ cargo install --locked --git https://github.com/ttdonovan/sa-forge-signer --tag 
 sa-forge-signer --version
 ```
 
-Install a tag, not a branch: `main` can hold unreleased changes, and a tag is what the [changelog](https://github.com/ttdonovan/sa-forge-signer/blob/main/CHANGELOG.md) describes. `--locked` builds with the dependency versions in `Cargo.lock`, the ones CI tested and audited.
+That installs `sa-forge-signer`, `sa-forge-signer-serve` and `sa-forge-signer-mcp` ([MCP over stdio](serve.md#mcp-over-stdio)), which the prebuilt archive does not carry yet. Install a tag, not a branch: `main` can hold unreleased changes, and a tag is what the [changelog](https://github.com/ttdonovan/sa-forge-signer/blob/main/CHANGELOG.md) describes. `--locked` builds with the dependency versions in `Cargo.lock`, the ones CI tested and audited.
 
 ## Updates
 

@@ -8,7 +8,23 @@ license = "Unlicense OR MIT"
 repository = "https://github.com/ttdonovan/sa-forge-signer"
 publish = false
 # Only these files make up the crate, so release-plz ignores CI and docs-only changes
-include = ["/src/**/*.rs", "/README.md", "/CHANGELOG.md", "/config.example.toml", "/LICENSE-MIT", "/UNLICENSE", "/COPYING"]
+include = ["/src/**/*.rs", "/skills/sa-forge-signer/**", "/README.md", "/CHANGELOG.md", "/config.example.toml", "/LICENSE-MIT", "/UNLICENSE", "/COPYING"]
+default-run = "sa-forge-signer"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "sa-forge-signer"
+path = "src/main.rs"
+
+[[bin]]
+name = "sa-forge-signer-serve"
+path = "src/bin/serve.rs"
+
+[[bin]]
+name = "sa-forge-signer-mcp"
+path = "src/bin/mcp.rs"
 
 [dependencies]
 anyhow = "1.0.104"
@@ -35,6 +51,11 @@ toml = "1.1.6"
 ureq = { version = "3.4.2", features = ["json"] }
 wincode = "0.6"
 zeroize = "1.9.0"
+
+[dev-dependencies]
+# Tests only: the Rust MCP SDK's types check the messages the hand-written handler writes. Never a
+# dependency of the binaries (docs/src/dev/design.md).
+rmcp = { version = "=3.9.0", default-features = false }
 
 [lints.rust]
 unsafe_code = "forbid"

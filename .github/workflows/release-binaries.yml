@@ -67,13 +67,15 @@ jobs:
 
       - name: Smoke test
         if: matrix.smoke
-        run: '"target/$TARGET/release/sa-forge-signer" --version'
+        run: |
+          "target/$TARGET/release/sa-forge-signer" --version
+          "target/$TARGET/release/sa-forge-signer-serve" --version
 
       - name: Package
         run: |
           name="sa-forge-signer-$TAG-$TARGET"
           mkdir -p "dist/$name"
-          cp "target/$TARGET/release/sa-forge-signer" README.md CHANGELOG.md LICENSE-MIT UNLICENSE COPYING "dist/$name/"
+          cp "target/$TARGET/release/sa-forge-signer" "target/$TARGET/release/sa-forge-signer-serve" README.md CHANGELOG.md LICENSE-MIT UNLICENSE COPYING "dist/$name/"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

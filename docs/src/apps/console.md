@@ -50,4 +50,4 @@ The crate has its own workspace and lockfile, so its dependency tree (GPUI and t
 
 Changing the UI: GPUI Kit's guides and docs, and how to read them, are in [Building an app](../dev/apps.md); its Claude skills can be installed with `just apps gpui-kit-skills` (optional; see [GPUI Kit skills](../appendix/gpui-kit-skills.md)).
 
-`src/log.rs` mirrors the signer's audit `Entry` (`src/audit.rs`) and `limits` (`src/engine.rs`). Change them together: a test parses lines written by the signer (`tests/fixtures/signer-audit.jsonl`), so a change to the signer's `Entry` fails it rather than silently breaking the chain check.
+`src/log.rs` mirrors the signer's audit `Entry` (`src/audit.rs`) and `usage` (`src/facts.rs`). Change them together: a test parses lines written by the signer (`tests/fixtures/signer-audit.jsonl`), so a change to the signer's `Entry` fails it rather than silently breaking the chain check.

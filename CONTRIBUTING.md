@@ -11,6 +11,8 @@
 
 Run `just` to list recipes. Before opening a pull request, run `just check` (the same gate as CI: fmt, clippy with warnings as errors, tests, shellcheck, advisories, dependency age), and `just docs check` if a doc changed. Keep `PLAN.md` in step with the work it tracks. For a change that may affect speed, run `just bench` (timings of the audit log's reads on synthetic logs) before and after, and set `SA_FORGE_SIGNER_LOG=info` (see Configuration) to see where a real sign spends its time.
 
+To try the MCP route from a Claude Code session in this checkout, `.mcp.json` adds a server named `sa-forge-signer-debug`: the debug build of `sa-forge-signer-mcp`, pointed at `127.0.0.1:18790`. Build with `just mcp-build`, then leave `just mcp-dev` running in another terminal: it starts the debug `sa-forge-signer-serve` on a throwaway home in `target/dev` (its own config, an unfunded session key named `dev`, a token and an audit log), creating it on first run. Restart the Claude session after a rebuild; delete `target/dev` to start over. It is for this checkout only, and never for a real key: the session runs as the user who owns that home, so nothing there is isolated from it.
+
 ## Code style
 
 The tools enforce most of it: `cargo fmt`, and clippy with `pedantic` and `nursery` denied and the panic rules in `Cargo.toml`'s `[lints]` (no `unwrap`, `expect`, `panic!`, indexing or slicing outside tests, no `as` casts, checked arithmetic, `unsafe_code` forbidden). The rest is by convention:
