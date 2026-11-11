@@ -24,7 +24,7 @@ solana-address = { version = "2.8.0", features = ["decode"] }
 solana-hash = "4.7.0"
 solana-instruction = "4.0.0"
 solana-keypair = "4.0.0"
-solana-message = { version = "5", features = ["wincode"] }
+solana-message = { version = "6", features = ["wincode"] }
 solana-signature = "3"
 solana-signer = "4.0.0"
 solana-transaction = { version = "5", features = ["wincode"] }
