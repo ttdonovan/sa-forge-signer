@@ -452,7 +452,24 @@ mod tests {
         let v: Value = serde_json::from_str(&post(&mcp, Some("secret"), None, &list).1).unwrap();
         assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 4);
 
-        let unknown = json!({"jsonrpc": "2.0", "id": 3, "method": "resources/list"});
+        let resources = json!({"jsonrpc": "2.0", "id": 3, "method": "resources/list"});
+        let v: Value =
+            serde_json::from_str(&post(&mcp, Some("secret"), None, &resources).1).unwrap();
+        assert_eq!(
+            v["result"]["resources"][0]["uri"],
+            "sa-forge-signer://llms.txt"
+        );
+        let read = json!({"jsonrpc": "2.0", "id": 4, "method": "resources/read",
+            "params": {"uri": "sa-forge-signer://llms.txt"}});
+        let v: Value = serde_json::from_str(&post(&mcp, Some("secret"), None, &read).1).unwrap();
+        assert!(
+            v["result"]["contents"][0]["text"]
+                .as_str()
+                .unwrap()
+                .starts_with("# sa-forge-signer\n")
+        );
+
+        let unknown = json!({"jsonrpc": "2.0", "id": 5, "method": "prompts/list"});
         let v: Value = serde_json::from_str(&post(&mcp, Some("secret"), None, &unknown).1).unwrap();
         assert_eq!(v["error"]["code"], -32601);
         std::fs::remove_dir_all(dir).unwrap();

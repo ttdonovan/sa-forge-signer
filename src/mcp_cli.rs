@@ -10,11 +10,11 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use serde_json::{Value, json};
 use zeroize::Zeroizing;
 
-use crate::url;
+use crate::{skill, url};
 
 /// Longer than the service's own drain of a running sign (220 s), so the service answers first.
 const TIMEOUT: Duration = Duration::from_secs(240);
@@ -26,9 +26,34 @@ struct Cli {
     /// Base URL of the running service; https, or http only to a loopback host
     #[arg(long, default_value = "http://127.0.0.1:8790")]
     url: String,
-    /// File holding the bearer token (from `sa-forge-signer token new`)
+    /// File holding the bearer token (from `sa-forge-signer token new`); needed to serve
     #[arg(long)]
-    token_file: PathBuf,
+    token_file: Option<PathBuf>,
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Forward standard input and output to the service until the client closes it (the default)
+    Serve,
+    /// The skill that teaches an agent to use the signer's tools
+    Skill {
+        #[command(subcommand)]
+        action: SkillAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum SkillAction {
+    /// Print the skill file
+    Print,
+    /// Write it as `~/.claude/skills/sa-forge-signer/SKILL.md`, or into a project with --project
+    Install {
+        /// The project folder whose `.claude/skills` to install into
+        #[arg(long)]
+        project: Option<PathBuf>,
+    },
 }
 
 /// Forwards until standard input closes and returns the exit code.
@@ -44,8 +69,38 @@ pub fn main() -> ExitCode {
 }
 
 fn run(cli: &Cli) -> Result<()> {
+    match &cli.command {
+        None | Some(Command::Serve) => serve(cli),
+        Some(Command::Skill {
+            action: SkillAction::Print,
+        }) => {
+            print!("{}", skill::text());
+            Ok(())
+        }
+        Some(Command::Skill {
+            action: SkillAction::Install { project },
+        }) => {
+            let home = std::env::var_os("HOME").map(PathBuf::from);
+            let skills = skill::skills_dir(project.as_deref(), home.as_deref())?;
+            match skill::install(&skills)? {
+                skill::Installed::Created(path) => println!("installed {}", path.display()),
+                skill::Installed::Replaced(path) => println!("updated {}", path.display()),
+                skill::Installed::Unchanged(path) => {
+                    println!("already up to date: {}", path.display());
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+fn serve(cli: &Cli) -> Result<()> {
     let endpoint = endpoint(&cli.url)?;
-    let token = read_token(&cli.token_file)?;
+    let token_file = cli
+        .token_file
+        .as_deref()
+        .context("--token-file is required to serve")?;
+    let token = read_token(token_file)?;
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(TIMEOUT))
         .http_status_as_error(false)
@@ -195,7 +250,15 @@ pub(crate) mod tests {
     fn the_command_line_is_well_formed() {
         Cli::command().debug_assert();
         assert!(Cli::try_parse_from(["sa-forge-signer-mcp", "--token-file", "t"]).is_ok());
-        assert!(Cli::try_parse_from(["sa-forge-signer-mcp"]).is_err());
+        assert!(Cli::try_parse_from(["sa-forge-signer-mcp", "skill", "print"]).is_ok());
+        assert!(
+            Cli::try_parse_from(["sa-forge-signer-mcp", "skill", "install", "--project", "x"])
+                .is_ok()
+        );
+        assert!(Cli::try_parse_from(["sa-forge-signer-mcp", "skill"]).is_err());
+        // Serving needs the token; the skill commands do not.
+        let bare = Cli::try_parse_from(["sa-forge-signer-mcp"]).unwrap();
+        assert!(run(&bare).is_err());
     }
 
     #[test]

@@ -8,7 +8,7 @@ license = "Unlicense OR MIT"
 repository = "https://github.com/ttdonovan/sa-forge-signer"
 publish = false
 # Only these files make up the crate, so release-plz ignores CI and docs-only changes
-include = ["/src/**/*.rs", "/README.md", "/CHANGELOG.md", "/config.example.toml", "/LICENSE-MIT", "/UNLICENSE", "/COPYING"]
+include = ["/src/**/*.rs", "/skills/sa-forge-signer/**", "/README.md", "/CHANGELOG.md", "/config.example.toml", "/LICENSE-MIT", "/UNLICENSE", "/COPYING"]
 default-run = "sa-forge-signer"
 
 [lib]

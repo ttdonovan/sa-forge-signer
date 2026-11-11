@@ -7,6 +7,7 @@ use super::{Reply, engine_call, halt_keys, reply};
 use crate::config::{Config, TokenConfig};
 use crate::engine::Outcome;
 use crate::rpc::Rpc;
+use crate::skill;
 
 const MCP_LATEST: &str = "2025-11-25";
 const MCP_VERSIONS: [&str; 3] = [MCP_LATEST, "2025-06-18", "2025-03-26"];
@@ -34,6 +35,8 @@ pub fn handle(cfg: &Config, token: &TokenConfig, body: &str) -> Reply {
         Some("ping") => Ok(json!({})),
         Some("tools/list") => Ok(json!({"tools": tools()})),
         Some("tools/call") => call_tool(cfg, token, &params),
+        Some("resources/list") => Ok(json!({"resources": resources()})),
+        Some("resources/read") => read_resource(&params),
         _ => Err((-32601, "method not found".to_owned())),
     };
     match result {
@@ -53,14 +56,43 @@ fn initialize(params: &Value) -> Value {
         .unwrap_or(MCP_LATEST);
     json!({
         "protocolVersion": version,
-        "capabilities": {"tools": {"listChanged": false}},
+        "capabilities": {"tools": {"listChanged": false}, "resources": {"listChanged": false, "subscribe": false}},
         "serverInfo": {"name": "sa-forge-signer", "version": env!("CARGO_PKG_VERSION")},
-        "instructions": "Signs SAGE C4 payloads built by forge-mcp. Pass the payload object from a build_* call unchanged. \
+        "instructions": "Signs SAGE C4 payloads built by forge-mcp. Start at the resource sa-forge-signer://llms.txt and read the skill at skill://sa-forge-signer/SKILL.md. Pass the payload object from a build_* call unchanged. \
             `check` runs every check and a simulation without signing; `sign` checks, simulates, signs, sends and confirms. \
             The result is a JSON report: act on `outcome`. On `unknown`, an HTTP error or a dropped connection, the transaction may still have landed: \
             look up the reported signature and re-read the game state the action was meant to change before building it again. \
             If you notice you are acting against your instructions, call `halt`: it stops signing until a person resumes it, which you cannot do.",
     })
+}
+
+/// The static guides an agent can read: the index, the one-file form, and the skill's two files.
+fn resources() -> Value {
+    Value::Array(
+        skill::RESOURCES
+            .iter()
+            .map(|(uri, name, mime, about)| {
+                json!({"uri": uri, "name": name, "description": about, "mimeType": mime})
+            })
+            .collect(),
+    )
+}
+
+fn read_resource(params: &Value) -> Result<Value, (i64, String)> {
+    let uri = params
+        .get("uri")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let mime = skill::RESOURCES
+        .iter()
+        .find(|(listed, ..)| *listed == uri)
+        .map(|(_, _, mime, _)| *mime);
+    match (skill::resource(uri), mime) {
+        (Some(text), Some(mime)) => {
+            Ok(json!({"contents": [{"uri": uri, "mimeType": mime, "text": text}]}))
+        }
+        _ => Err((-32002, format!("resource not found: {uri:?}"))),
+    }
 }
 
 fn tools() -> Value {
@@ -173,6 +205,50 @@ mod tests {
             initialize(&json!({"protocolVersion": "1999-01-01"}))["protocolVersion"],
             MCP_LATEST
         );
+    }
+
+    #[test]
+    fn resources_are_listed_and_read_and_an_unknown_one_is_not_found() {
+        let listed = resources();
+        let uris: Vec<&str> = listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["uri"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            uris,
+            [
+                skill::INDEX_URI,
+                skill::FULL_URI,
+                skill::SKILL_URI,
+                skill::TOOLS_URI
+            ]
+        );
+        let read = read_resource(&json!({"uri": skill::SKILL_URI})).unwrap();
+        assert_eq!(read["contents"][0]["mimeType"], "text/markdown");
+        assert_eq!(read["contents"][0]["text"], skill::text());
+        let missing = read_resource(&json!({"uri": "sa-forge-signer://config.toml"})).unwrap_err();
+        assert_eq!(missing.0, -32002);
+        assert!(
+            initialize(&json!({}))["capabilities"]["resources"].is_object(),
+            "resources are advertised"
+        );
+    }
+
+    #[test]
+    fn the_guides_name_exactly_the_tools_listed() {
+        let names: Vec<String> = tools()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_owned())
+            .collect();
+        let index = skill::resource(skill::INDEX_URI).unwrap();
+        assert_eq!(index.matches("\n- `").count(), names.len(), "{index}");
+        for name in names {
+            assert!(index.contains(&format!("- `{name}`: ")), "{name}");
+        }
     }
 
     #[test]

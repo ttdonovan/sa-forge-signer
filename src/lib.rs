@@ -22,6 +22,7 @@ mod policy_approval;
 mod rpc;
 mod serve;
 pub mod serve_cli;
+mod skill;
 #[cfg(test)]
 mod testrpc;
 mod text;
