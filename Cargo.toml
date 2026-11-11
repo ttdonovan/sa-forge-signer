@@ -27,7 +27,7 @@ solana-keypair = "4.0.0"
 solana-message = { version = "5", features = ["wincode"] }
 solana-signature = "3"
 solana-signer = "4.0.0"
-solana-transaction = { version = "5", features = ["wincode"] }
+solana-transaction = { version = "6", features = ["wincode"] }
 tiny_http = "0.12"
 tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["fmt", "json", "std"] }
