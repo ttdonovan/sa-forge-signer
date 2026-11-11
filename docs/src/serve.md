@@ -44,7 +44,14 @@ sa-forge-signer-mcp skill install --project .      # ./.claude/skills/sa-forge-s
 
 ## MCP over stdio
 
-`sa-forge-signer-mcp` is for an MCP client that starts its servers as child processes and talks to them on standard input and output. It is a third binary from the same crate and a client of the running service, not a second signer: it forwards each JSON-RPC message to the service's `/mcp` route with the bearer token and writes the reply back, so the tools, their arguments and every check are the ones above.
+`sa-forge-signer-mcp` is for an MCP client that starts its servers as child processes and talks to them on standard input and output. It does not replace `sa-forge-signer-serve`: the service must be running as its own process, and a stdio setup is the two together. It is a third binary from the same crate and a client of that service, not a second signer: it forwards each JSON-RPC message to the service's `/mcp` route with the bearer token and writes the reply back, so the tools, their arguments and every check are the ones above.
+
+| Process | Started by | Runs as | Holds |
+|---|---|---|---|
+| `sa-forge-signer-serve` | you: a terminal, a service manager or Docker | the signer's OS user | the keys and the config |
+| `sa-forge-signer-mcp` | the agent's MCP client, as a child process | the agent's OS user | the service's URL and a token |
+
+A client that supports MCP over HTTP, as Claude Code does, does not need it: point the client at the service's `/mcp` route as above.
 
 ```sh
 sa-forge-signer-mcp --token-file ~/.config/sa-forge-signer/agent.token      # --url defaults to http://127.0.0.1:8790
