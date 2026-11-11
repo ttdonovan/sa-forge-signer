@@ -11,7 +11,7 @@ publish = false
 [workspace]
 
 [dependencies]
-base64 = "0.22.1"
+base64 = "0.23.1"
 bs58 = "0.5.1"
 console_error_panic_hook = "0.1.7"
 js-sys = "0.3.104"
