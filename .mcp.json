@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "sa-forge-signer-debug": {
+      "command": "target/debug/sa-forge-signer-mcp",
+      "args": ["--url", "http://127.0.0.1:18790", "--token-file", "target/dev/agent.token"]
+    }
+  }
+}

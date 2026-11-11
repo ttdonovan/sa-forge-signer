@@ -19,6 +19,16 @@ bench:
 build:
     cargo build --release --locked
 
+# Build the debug binaries that this repository's .mcp.json and `just mcp-dev` start; restart the Claude session afterwards
+[group('mcp')]
+mcp-build:
+    cargo build --locked --bins
+
+# Run the debug service for .mcp.json on a throwaway home in target/dev (127.0.0.1:18790); leave it running
+[group('mcp')]
+mcp-dev:
+    @scripts/dev/mcp-dev.sh
+
 # The docs book (`just docs`, `just docs check`) and the apps/ extras (`just apps <recipe>`).
 
 mod docs
