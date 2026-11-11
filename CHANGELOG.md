@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/ttdonovan/sa-forge-signer/compare/v0.5.0...v0.6.0) - 2026-11-11
+
+### Added
+
+- [**breaking**] speak MCP revision 2026-07-28 only.
+- serve llms.txt, llms-full.txt and an agent skill as MCP resources, and install the skill from sa-forge-signer-mcp.
+- add sa-forge-signer-mcp, MCP over stdio for a running service.
+- [**breaking**] move the service into its own binary, sa-forge-signer-serve.
+
+### Fixed
+
+- [**breaking**] require https for rpc_url, allowing http only for a loopback host.
+- simulate only unsigned copies, so the RPC never holds a transaction before its intent.
+- count only signs that were not refused toward a key's rate limit.
+- escape caller text on approval prompts and cap it in audit entries.
+
+### Other
+
+- check the MCP handler's messages against the Rust MCP SDK's types.
+- say outright that sa-forge-signer-mcp needs a running sa-forge-signer-serve.
+- add a design decisions chapter, and show in the README how an agent connects.
+- split the engine into its pipeline, its rebuild gates, the approval prompt and the send loop.
+- split serve into its routes and its MCP handler, and give the URL and caller-text helpers their own modules.
+- split the crate into a library and a thin sa-forge-signer binary.
+
 ## [0.5.0](https://github.com/ttdonovan/sa-forge-signer/compare/v0.4.1...v0.5.0) - 2026-11-09
 
 ### Added
