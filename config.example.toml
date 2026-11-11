@@ -37,7 +37,7 @@ cluster = "zink-testnet"
 # transfer_to = ["PROFILE_ADDRESS", "SESSION_KEY_PUBKEY"]  # fund the vault and the session key
 # transfer_max_lamports = 100000000                         # all transfers in one transaction
 
-# `sa-forge-signer serve`: HTTP at /v1/check and /v1/sign, MCP at /mcp.
+# `sa-forge-signer-serve`: HTTP at /v1/check and /v1/sign, MCP at /mcp.
 # [serve]
 # listen = "127.0.0.1:8790"
 # allowed_hosts = ["127.0.0.1", "localhost"]

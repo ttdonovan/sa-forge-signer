@@ -11,7 +11,7 @@ use crate::audit::Audit;
 use crate::config::{Config, KeyClass};
 use crate::engine::Mode;
 use crate::keystore::KeyStore;
-use crate::{config, engine, halt, keystore, policy_approval, rpc, serve, trace, transfer};
+use crate::{config, engine, halt, keystore, policy_approval, rpc, trace, transfer};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -65,8 +65,6 @@ enum Command {
     /// Read the audit log
     #[command(subcommand)]
     Audit(AuditCommand),
-    /// Run the long-running signer: HTTP at /v1/check and /v1/sign, MCP at /mcp (see [serve])
-    Serve,
     /// Manage bearer tokens for `serve`
     #[command(subcommand)]
     Token(TokenCommand),
@@ -201,7 +199,6 @@ fn run(cli: Cli) -> Result<ExitCode> {
             print!("{}", Config::load(&path, true)?.describe(&path));
             Ok(ExitCode::SUCCESS)
         }
-        Command::Serve => serve::run(Config::load(&path, true)?).map(|()| ExitCode::SUCCESS),
         Command::Token(TokenCommand::New { name, out }) => {
             let hash = keystore::create_token(&out)?;
             println!("{hash}");

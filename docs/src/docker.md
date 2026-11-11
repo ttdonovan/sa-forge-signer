@@ -4,7 +4,7 @@ description: "The non-root image, the config, keys and state mounts, one-shot an
 
 # Running in Docker
 
-The `Dockerfile` builds a small non-root image (uid 10001) with base images pinned by digest. It holds no keys or config; mount them at run time:
+The `Dockerfile` builds a small non-root image (uid 10001) with base images pinned by digest. It holds both binaries: the service, `sa-forge-signer-serve`, is the entrypoint, and the command line runs with `--entrypoint sa-forge-signer`. Both read the config from `SA_FORGE_SIGNER_CONFIG`, which the image sets to the path below. It holds no keys or config; mount them at run time:
 
 | Mount | Path in the container | Notes |
 |---|---|---|
@@ -16,11 +16,11 @@ The `Dockerfile` builds a small non-root image (uid 10001) with base images pinn
 docker build -t sa-forge-signer .
 
 # One-shot: check or sign a payload from stdin
-docker run --rm -i --read-only --cap-drop ALL \
+docker run --rm -i --read-only --cap-drop ALL --entrypoint sa-forge-signer \
   -v "$PWD/config.toml:/etc/sa-forge-signer/config.toml:ro" -v "$PWD/keys:/run/keys:ro" \
   -v "$PWD/state:/var/lib/sa-forge-signer" sa-forge-signer check - < payload.json
 
-# Service (the default command): publish on loopback only; allow at least 230 s to stop so signs drain
+# Service (the entrypoint): publish on loopback only; allow at least 230 s to stop so signs drain
 docker run -d --name sa-forge-signer --read-only --cap-drop ALL --stop-timeout 230 \
   -p 127.0.0.1:8790:8790 \
   -v "$PWD/config.toml:/etc/sa-forge-signer/config.toml:ro" -v "$PWD/keys:/run/keys:ro" \

@@ -112,7 +112,7 @@ For the testnet setup it ends like this (the session setup shows `class: session
 `key file: missing` means the key is in the config but not in the key directory. The daily cap and rate limit are the defaults; raise them per key if the agent hits them ([Configuration](configuration.md#settings)).
 
 ```sh
-sfs serve                                   # leave it running; 127.0.0.1:8790
+sfs-serve                                   # leave it running; 127.0.0.1:8790
 claude mcp add --transport http sa-forge-signer http://127.0.0.1:8790/mcp \
   --header "Authorization: Bearer $(cat ~/.config/sa-forge-signer/agent.token)"
 ```

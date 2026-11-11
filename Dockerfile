@@ -14,7 +14,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/src/target \
     cargo build --release --locked \
-    && install -m 0755 target/release/sa-forge-signer /usr/local/bin/sa-forge-signer
+    && install -m 0755 target/release/sa-forge-signer target/release/sa-forge-signer-serve /usr/local/bin/
 
 FROM ${RUNTIME_IMAGE}
 RUN apt-get update \
@@ -24,8 +24,10 @@ RUN apt-get update \
     && useradd --system --uid 10001 --gid signer --no-create-home --shell /usr/sbin/nologin signer \
     && install -d -o signer -g signer -m 0700 /var/lib/sa-forge-signer /run/keys \
     && install -d -m 0755 /etc/sa-forge-signer
-COPY --from=builder /usr/local/bin/sa-forge-signer /usr/local/bin/sa-forge-signer
+COPY --from=builder /usr/local/bin/sa-forge-signer /usr/local/bin/sa-forge-signer-serve /usr/local/bin/
 USER 10001:10001
 EXPOSE 8790
-ENTRYPOINT ["/usr/local/bin/sa-forge-signer", "--config", "/etc/sa-forge-signer/config.toml"]
-CMD ["serve"]
+# Both binaries read the config from here. The service is the entrypoint; run the CLI with
+# `--entrypoint sa-forge-signer`.
+ENV SA_FORGE_SIGNER_CONFIG=/etc/sa-forge-signer/config.toml
+ENTRYPOINT ["/usr/local/bin/sa-forge-signer-serve"]

@@ -4,7 +4,7 @@ description: "serve: the HTTP routes and MCP tools, bearer tokens and allowed ho
 
 # Serving over HTTP and MCP
 
-`sa-forge-signer serve` runs the signer as a long-lived service, so each signature skips process start-up and keys stay loaded in one isolated place. It listens on `[serve] listen` (default `127.0.0.1:8790`):
+`sa-forge-signer-serve` runs the signer as a long-lived service (called `serve` in this book, after its `[serve]` config table). It is its own binary, installed beside `sa-forge-signer`, and takes the same `--config`; it replaces the `sa-forge-signer serve` subcommand, which no longer exists. As a service, each signature skips process start-up and keys stay loaded in one isolated place. It listens on `[serve] listen` (default `127.0.0.1:8790`):
 
 - `POST /v1/check` and `POST /v1/sign`: body `{"payload": <payload object>, "key": "optional", "intent": "optional"}`; the reply is the same [JSON report](check-and-sign.md#the-report) as the CLI. `4xx` means a request or auth problem, `500` that the signer could not finish (see `error`).
 - `POST /v1/halt`: body `{"reason": "...", "key": "optional"}`; halts that key, or every key the token lists, until a person runs `resume` at the signer's terminal ([Halting](check-and-sign.md#halting)). The reply is `{"halted": [<keys>]}`. A key the token does not list is `403`; a missing or empty `reason` (or one over 500 characters) is `400`. There is no resume route.

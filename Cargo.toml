@@ -18,6 +18,10 @@ path = "src/lib.rs"
 name = "sa-forge-signer"
 path = "src/main.rs"
 
+[[bin]]
+name = "sa-forge-signer-serve"
+path = "src/bin/serve.rs"
+
 [dependencies]
 anyhow = "1.0.104"
 base64 = "0.23.1"

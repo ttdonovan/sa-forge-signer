@@ -29,7 +29,9 @@ One crate: a library (`lib.rs`, not a public API) that each binary calls into. E
 | Module | Owns |
 |---|---|
 | `main.rs` | The `sa-forge-signer` binary: only calls `cli::main` |
-| `cli.rs` | The CLI (`check`, `sign`, `halt`, `resume`, `key`, `token`, `audit`, `serve`, `config`) and exit codes |
+| `cli.rs` | The CLI (`check`, `sign`, `halt`, `resume`, `key`, `token`, `audit`, `config`) and exit codes |
+| `bin/serve.rs` | The `sa-forge-signer-serve` binary: only calls `serve_cli::main` |
+| `serve_cli.rs` | `sa-forge-signer-serve`'s command line (`--config`) |
 | `config.rs` | Loading and validating `config.toml`: keys, classes, approval, limits, serve tokens, each key's policy digest; `config init` and `config show` |
 | `cluster.rs` | Built-in cluster profiles: genesis hash, default RPC, explorer, and the programs any key may call |
 | `payload.rs` | The forge-mcp `build_*` payload (version 1): an instruction list, not a serialized transaction |

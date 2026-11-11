@@ -37,7 +37,7 @@ sa-forge-signer key new alice-session --class session
 
 sa-forge-signer check payload.json                  # checks + simulation, never signs
 sa-forge-signer sign --intent "scan round" payload.json
-sa-forge-signer serve                               # HTTP and MCP on 127.0.0.1:8790
+sa-forge-signer-serve                               # HTTP and MCP on 127.0.0.1:8790
 ```
 
 ## Docs

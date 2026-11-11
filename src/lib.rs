@@ -20,6 +20,7 @@ mod policy;
 mod policy_approval;
 mod rpc;
 mod serve;
+pub mod serve_cli;
 #[cfg(test)]
 mod testrpc;
 mod trace;
