@@ -39,4 +39,4 @@ Player Profile's `key` signer and `profile` account form a group with the empty 
 
 Regenerate from the new IDLs with `--from` naming their source, and commit the table in the same change as anything that depends on it. The `programs` hashes say which IDLs a table came from.
 
-`just apps idl-table-check` is its gate: fmt, clippy, tests, advisories and dependency age. Like every app it stays out of the signer's build.
+`just apps idl-table-check` is its gate: fmt, clippy, tests, advisories and dependency age. Like every app it stays out of the signer's build; the `apps` workflow runs this gate.
