@@ -9,10 +9,9 @@ lock="${1:-$ROOT/Cargo.lock}"
 now="$(date +%s)"
 cutoff=$((now - min_days * 86400))
 # "name version" pairs allowed younger than min_days, each with its reason; remove once old enough.
-# rustls 0.23.46: RUSTSEC-2026-0346..0349 (owner's exception, 2026-10-18; 7 days old on 2026-10-21).
 # rmcp 3.9.0: tests only, never in a binary; the version the MCP conformance tests are pinned to
 # (owner's exception, 2026-11-11; 7 days old on 2026-11-12 16:07 UTC).
-exceptions=("rustls 0.23.46" "rmcp 3.9.0")
+exceptions=("rmcp 3.9.0")
 # ALLOW_YOUNG_PREFIXES: space-separated crate families (a name, or the name plus "-...") allowed at any
 # age. Set only by a caller that accepts it, such as an app's gate; never by the signer's.
 read -r -a young_prefixes <<<"${ALLOW_YOUNG_PREFIXES:-}"
