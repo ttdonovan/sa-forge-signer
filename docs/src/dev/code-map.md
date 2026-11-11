@@ -50,6 +50,9 @@ One crate: a library (`lib.rs`, not a public API) that each binary calls into. E
 | `policy_approval.rs` | Policy approvals under `state_dir/policy/`: `key approve` at the terminal, and the `policy` refusal |
 | `trace.rs` | Opt-in tracing on stderr from `SA_FORGE_SIGNER_LOG`: the subscriber, and what spans may never carry |
 | `bench.rs` | Test-only: `just bench`, timings of the audit log's reads on synthetic logs |
-| `serve.rs` | `serve`: JSON over HTTP at `/v1/check`, `/v1/sign` and `/v1/halt`, MCP at `/mcp`, bearer-token auth |
+| `serve/mod.rs` | `serve`: the listener and its drain on shutdown, JSON over HTTP at `/v1/check`, `/v1/sign` and `/v1/halt`, bearer-token auth, and the Host and Origin check |
+| `serve/mcp.rs` | MCP at `/mcp`: the JSON-RPC handler and the tools `check`, `sign`, `key_show` and `halt` |
+| `url.rs` | URL rules shared by the config, the service and the stdio proxy: https, or http only to a loopback host |
+| `text.rs` | Caller text (`summary`, `intent`, a halt `reason`): escaped and capped for a terminal, clipped for the audit log |
 
 Checks and gates: `just check` runs `scripts/ci/check.sh` (fmt, clippy, tests, shellcheck, advisories, dependency age), the same gate as CI.

@@ -11,7 +11,7 @@ use crate::audit::Audit;
 use crate::config::{Config, KeyClass};
 use crate::engine::Mode;
 use crate::keystore::KeyStore;
-use crate::{config, engine, halt, keystore, policy_approval, rpc, trace, transfer};
+use crate::{config, engine, halt, keystore, policy_approval, rpc, text, trace, transfer};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -390,8 +390,8 @@ fn key_show(path: &std::path::Path, name: &str) -> Result<ExitCode> {
         Ok(Some(h)) => format!(
             "since {} by {}: {}",
             h.ts,
-            halt::printable(&h.by, halt::MAX_PRINTED),
-            halt::printable(&h.reason, halt::MAX_PRINTED)
+            text::printable(&h.by, text::MAX_PRINTED),
+            text::printable(&h.reason, text::MAX_PRINTED)
         ),
         Err(e) => format!("unreadable: {e:#}"),
     };

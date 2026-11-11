@@ -24,5 +24,7 @@ mod serve;
 pub mod serve_cli;
 #[cfg(test)]
 mod testrpc;
+mod text;
 mod trace;
 mod transfer;
+mod url;

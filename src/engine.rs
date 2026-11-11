@@ -15,7 +15,7 @@ use solana_signer::Signer;
 use solana_transaction::Transaction;
 use zeroize::Zeroizing;
 
-use crate::audit::{self, Audit, Entry, Finding, KeyLock};
+use crate::audit::{Audit, Entry, Finding, KeyLock};
 use crate::checks::{Refusal, refuse as refusal};
 use crate::cluster::Cluster;
 use crate::config::{Approval, Config, KeyConfig};
@@ -26,6 +26,7 @@ use crate::keystore::KeyStore;
 use crate::payload::Payload;
 use crate::policy::{self, Facts, KeyPolicy, Request, Stage, Verdict};
 use crate::rpc::{Chain, Rpc, RpcError, SimBlockhash, Simulation, Status, delta};
+use crate::text;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -201,7 +202,7 @@ pub fn execute(
             command: "sign".to_owned(),
             payload_hash: payload.hash.clone(),
             programs: program_ids(&payload),
-            summary: audit::clip(&payload.summary),
+            summary: text::clip(&payload.summary),
             intent: logged_intent(mode),
             outcome: serde_json::to_value(report.outcome)?
                 .as_str()
@@ -473,7 +474,7 @@ fn intent_entry(
         command: SIGN_INTENT.to_owned(),
         payload_hash: payload.hash.clone(),
         programs: program_ids(payload),
-        summary: audit::clip(&payload.summary),
+        summary: text::clip(&payload.summary),
         intent: logged_intent(mode),
         outcome: "pending".to_owned(),
         signature: tx.signatures.first().map(ToString::to_string),
@@ -486,7 +487,7 @@ fn intent_entry(
 /// The caller's `intent`, as an audit entry keeps it.
 fn logged_intent(mode: &Mode) -> Option<String> {
     match mode {
-        Mode::Sign { intent } => intent.as_deref().map(audit::clip),
+        Mode::Sign { intent } => intent.as_deref().map(text::clip),
         Mode::Check => None,
     }
 }
@@ -924,7 +925,7 @@ fn approval_prompt(report: &Report, key: &KeyConfig) -> String {
         report
             .compute_units
             .map_or_else(|| "unknown".to_owned(), |u| u.to_string()),
-        halt::printable(&report.summary, halt::MAX_PRINTED),
+        text::printable(&report.summary, text::MAX_PRINTED),
     )
 }
 
@@ -1423,12 +1424,12 @@ mod tests {
 
     #[test]
     fn audit_entries_clip_caller_text() {
-        let long = "x".repeat(audit::MAX_TEXT + 10);
+        let long = "x".repeat(text::MAX_TEXT + 10);
         let mode = Mode::Sign { intent: Some(long) };
         let intent = logged_intent(&mode).unwrap();
-        assert!(intent.starts_with(&"x".repeat(audit::MAX_TEXT)));
+        assert!(intent.starts_with(&"x".repeat(text::MAX_TEXT)));
         assert!(intent.ends_with(" [truncated]"));
-        assert_eq!(audit::clip("short"), "short");
+        assert_eq!(text::clip("short"), "short");
         assert_eq!(logged_intent(&Mode::Check), None);
     }
 

@@ -14,7 +14,7 @@ use clap::Parser;
 use serde_json::{Value, json};
 use zeroize::Zeroizing;
 
-use crate::config;
+use crate::url;
 
 /// Longer than the service's own drain of a running sign (220 s), so the service answers first.
 const TIMEOUT: Duration = Duration::from_secs(240);
@@ -57,11 +57,11 @@ fn run(cli: &Cli) -> Result<()> {
 }
 
 /// The service's MCP route under `url`, which must not carry the token across a network in clear.
-fn endpoint(url: &str) -> Result<String> {
-    if !config::secure_rpc_url(url) {
+fn endpoint(base: &str) -> Result<String> {
+    if !url::secure(base) {
         bail!("--url: must start with https://, or http:// only for a loopback host");
     }
-    Ok(format!("{}/mcp", url.trim_end_matches('/')))
+    Ok(format!("{}/mcp", base.trim_end_matches('/')))
 }
 
 fn read_token(path: &Path) -> Result<Zeroizing<String>> {

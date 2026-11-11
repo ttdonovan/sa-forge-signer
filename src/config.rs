@@ -197,24 +197,6 @@ pub fn parse_address(field: &str, value: &str) -> Result<Address> {
     Address::from_str(value).map_err(|e| anyhow::anyhow!("{field}: invalid address {value:?}: {e}"))
 }
 
-/// Whether `url` is https, or http to a loopback host: signed transactions and any API key in
-/// the URL never cross a network in clear.
-pub fn secure_rpc_url(url: &str) -> bool {
-    if url.starts_with("https://") {
-        return true;
-    }
-    let Some(rest) = url.strip_prefix("http://") else {
-        return false;
-    };
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
-    let host_port = authority.rsplit('@').next().unwrap_or_default();
-    let host = crate::serve::host_name(host_port);
-    host.eq_ignore_ascii_case("localhost")
-        || host
-            .parse::<std::net::IpAddr>()
-            .is_ok_and(|ip| ip.is_loopback())
-}
-
 pub fn valid_key_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 64
@@ -348,7 +330,7 @@ impl Config {
             .rpc_url
             .unwrap_or_else(|| cluster.default_rpc.to_owned());
         // Not printed: the URL may hold an API key.
-        if !secure_rpc_url(&rpc_url) {
+        if !crate::url::secure(&rpc_url) {
             bail!(
                 "rpc_url: must start with https://, or http:// only for a loopback host (127.0.0.1, ::1, localhost)"
             );
@@ -638,28 +620,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rpc_url_must_be_https_unless_loopback() {
-        for ok in [
-            "https://rpc1.z.ink",
-            "https://rpc.example/?api-key=x",
-            "http://127.0.0.1:8899",
-            "http://127.9.9.9",
-            "http://localhost:8899/",
-            "http://[::1]:8899",
-        ] {
-            assert!(secure_rpc_url(ok), "{ok}");
-        }
-        for bad in [
-            "http://rpc1.z.ink",
-            "http://10.0.0.5:8899",
-            "http://127.0.0.1.evil.example",
-            "http://127.0.0.1@evil.example",
-            "http://localhost.evil.example",
-            "ftp://127.0.0.1",
-            "rpc1.z.ink",
-        ] {
-            assert!(!secure_rpc_url(bad), "{bad}");
-        }
+    fn a_plain_http_rpc_url_does_not_load_and_is_not_printed() {
         let err = Config::load_str("rpc_url = \"http://rpc.example/key-abc\"\n")
             .err()
             .unwrap()
