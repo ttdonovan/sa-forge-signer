@@ -634,6 +634,33 @@ mod tests {
     }
 
     #[test]
+    fn the_stdio_proxy_reaches_the_same_tools() {
+        let (base, dir) = live("stdio");
+        let input = concat!(
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#,
+            "\n",
+            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+            "\n",
+            r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
+            "\n",
+        );
+        let out = crate::mcp_cli::tests::piped(input, crate::mcp_cli::tests::live(&base, "secret"));
+        assert_eq!(out.len(), 2, "{out:?}");
+        assert_eq!(out[0]["result"]["serverInfo"]["name"], "sa-forge-signer");
+        assert_eq!(out[1]["result"]["tools"].as_array().unwrap().len(), 4);
+        let denied =
+            crate::mcp_cli::tests::piped(input, crate::mcp_cli::tests::live(&base, "wrong"));
+        assert!(
+            denied[0]["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("bearer token"),
+            "{denied:?}"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn a_token_cannot_use_another_key() {
         let (base, dir) = live("auth");
         let payload = json!({"version": 1, "summary": "s", "transaction": {"fee_payer": OTHER, "instructions": [

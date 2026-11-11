@@ -1,5 +1,5 @@
 ---
-description: "serve: the HTTP routes and MCP tools, bearer tokens and allowed hosts, graceful shutdown, and adding it to Claude Code"
+description: "serve: the HTTP routes and MCP tools, bearer tokens and allowed hosts, graceful shutdown, adding it to Claude Code, and sa-forge-signer-mcp for MCP clients that speak only stdio"
 ---
 
 # Serving over HTTP and MCP
@@ -20,3 +20,19 @@ On SIGTERM or SIGINT the service stops taking requests and lets running ones fin
 MCP clients pass the payload object from the forge-mcp `build_*` result unchanged, and call `check` before `sign`. In a 15-payload test every payload arrived byte-exact, but the model re-types each one, so each costs its tokens twice and any partial-signer secret appears twice in the transcript.
 
 Add it to Claude Code with `claude mcp add --transport http sa-forge-signer http://127.0.0.1:8790/mcp --header "Authorization: Bearer $(cat <file>)"`.
+
+## MCP over stdio
+
+`sa-forge-signer-mcp` is for an MCP client that starts its servers as child processes and talks to them on standard input and output. It is a third binary from the same crate and a client of the running service, not a second signer: it forwards each JSON-RPC message to the service's `/mcp` route with the bearer token and writes the reply back, so the tools, their arguments and every check are the ones above.
+
+```sh
+sa-forge-signer-mcp --token-file ~/.config/sa-forge-signer/agent.token      # --url defaults to http://127.0.0.1:8790
+claude mcp add sa-forge-signer -- sa-forge-signer-mcp --token-file ~/.config/sa-forge-signer/agent.token
+```
+
+- It reads no config and no key, and cannot sign on its own: the MCP client starts it as the agent's OS user, which the [isolation rule](setup.md#isolation) keeps away from both. It holds what the HTTP setup already gives the agent, the service's URL and a token.
+- `--url` must be `https://`, or `http://` only to a loopback host (`127.0.0.1`, `::1`, `localhost`), so the token never crosses a network in clear. `--token-file` is required; the file's content is the token, with surrounding whitespace removed.
+- Without a running `sa-forge-signer-serve` every request fails. A request the service cannot be reached for, or answers without a JSON-RPC reply (a wrong token is HTTP `401`), comes back as a JSON-RPC error with code `-32000` naming the cause. For a `sign` that means the outcome is `unknown`: [reconcile](check-and-sign.md#retrying-safely) before retrying.
+- It waits up to 240 s for each reply, longer than the service's own 220 s drain. `confirm` keys still prompt on the service's terminal, never here.
+- The release archive and the install script's prebuilt download do not carry it yet. `cargo install` from a tag or `scripts/installer/install.sh --from-source` builds it with the other two.
+

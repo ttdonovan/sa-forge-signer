@@ -48,7 +48,7 @@ cargo install --locked --git https://github.com/ttdonovan/sa-forge-signer --tag 
 sa-forge-signer --version
 ```
 
-That installs both binaries, `sa-forge-signer` and `sa-forge-signer-serve`. Install a tag, not a branch: `main` can hold unreleased changes, and a tag is what the [changelog](https://github.com/ttdonovan/sa-forge-signer/blob/main/CHANGELOG.md) describes. `--locked` builds with the dependency versions in `Cargo.lock`, the ones CI tested and audited.
+That installs `sa-forge-signer`, `sa-forge-signer-serve` and `sa-forge-signer-mcp` ([MCP over stdio](serve.md#mcp-over-stdio)), which the prebuilt archive does not carry yet. Install a tag, not a branch: `main` can hold unreleased changes, and a tag is what the [changelog](https://github.com/ttdonovan/sa-forge-signer/blob/main/CHANGELOG.md) describes. `--locked` builds with the dependency versions in `Cargo.lock`, the ones CI tested and audited.
 
 ## Updates
 

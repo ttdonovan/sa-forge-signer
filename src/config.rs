@@ -199,7 +199,7 @@ pub fn parse_address(field: &str, value: &str) -> Result<Address> {
 
 /// Whether `url` is https, or http to a loopback host: signed transactions and any API key in
 /// the URL never cross a network in clear.
-fn secure_rpc_url(url: &str) -> bool {
+pub fn secure_rpc_url(url: &str) -> bool {
     if url.starts_with("https://") {
         return true;
     }

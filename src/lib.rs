@@ -15,6 +15,7 @@ mod facts;
 mod halt;
 mod instruction_table;
 mod keystore;
+pub mod mcp_cli;
 mod payload;
 mod policy;
 mod policy_approval;
