@@ -4,7 +4,7 @@ description: "Extras built beside the signer under apps/: what they are, and how
 
 # Apps
 
-Extras that sit beside the signer under `apps/`, each its own crate with its own workspace and `Cargo.lock`. They are not part of the signer: `just check`, CI, the release binaries, the Docker image and the signer's version leave them out, and a change to one does not bump `sa-forge-signer`.
+Extras that sit beside the signer under `apps/`, each its own crate with its own workspace and `Cargo.lock`. They are not part of the signer: `just check`, the `ci` workflow, the release binaries, the Docker image and the signer's version leave them out, and a change to one does not bump `sa-forge-signer`. A separate `apps` workflow runs the grant page's and the IDL table generator's own gates when something under `apps/` changes, and weekly; the console's gate runs only locally.
 
 None of them holds keys or signs with the signer's keys. The grant page has the human's own browser wallet sign; it holds no keys itself. Each runs as the human, not the agent, and the [isolation rule](../setup.md#isolation) still applies: nothing here should give the agent's OS user a way into the signer's keys, config or state.
 

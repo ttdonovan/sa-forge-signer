@@ -6,7 +6,7 @@ Extras that sit beside the signer: tools a human runs to watch or work with it. 
 
 - **Never weaken the signer's isolation.** An app runs as the human, never the agent. It does not read keys, sign, or hold anything that can sign. The grant page is no exception: the human's own wallet signs, and the page never holds or sees a key. It reads the signer's state and config read-only (or through `serve`'s routes) and never writes, locks or truncates them: write access to `state_dir` can rewrite the audit chain. Nothing an app adds may give the agent's OS user a path to the keys, config or state, or a way to approve a signature.
 - **Approval does not go through a terminal pane or anything the agent's user can script.** See "Typing into the approval terminal" in `SECURITY.md`.
-- **Stay out of the signer's build.** Each app has its own `[workspace]` table and `Cargo.lock`, so it is not a member of the root package, and its dependencies stay out of `just check`, CI, the release binaries and the Docker image. Do not add an app to any of them.
+- **Stay out of the signer's build.** Each app has its own `[workspace]` table and `Cargo.lock`, so it is not a member of the root package, and its dependencies stay out of `just check`, the `ci` workflow, the release binaries and the Docker image. Do not add an app to any of them. The separate `apps` workflow runs an app's own gate.
 - **Package names start with `sa-forge-signer-`** (for example `sa-forge-signer-console`), so they are not confused with other SAGE forge projects.
 
 ## Code
@@ -26,7 +26,7 @@ The console is built with GPUI Kit (the `gpui-kit` crate). Before changing its U
 
 ## Recipes and gate
 
-Recipes live in `apps/justfile`, the root justfile's `apps` module: run them as `just apps <recipe>` from the root, or `just <recipe>` inside `apps/`. Paths are relative to `source_directory()`. Give each app a run recipe named after it and an `<app>-check` gate (fmt, clippy with warnings as errors, tests, `cargo audit`, dependency age), and run that gate before committing. CI does not run it.
+Recipes live in `apps/justfile`, the root justfile's `apps` module: run them as `just apps <recipe>` from the root, or `just <recipe>` inside `apps/`. Paths are relative to `source_directory()`. Give each app a run recipe named after it and an `<app>-check` gate (fmt, clippy with warnings as errors, tests, `cargo audit`, dependency age), and run that gate before committing. Each recipe calls `scripts/ci/app-check.sh <app>`, which the `apps` workflow (`.github/workflows/apps.yml`) also runs for the grant page and the IDL table generator, on a change under `apps/` and weekly; it is not a required check. The console is not in that workflow yet, so its gate runs only locally.
 
 ## A new app
 
