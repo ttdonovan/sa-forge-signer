@@ -19,7 +19,7 @@ On SIGTERM or SIGINT the service stops taking requests and lets running ones fin
 
 MCP clients pass the payload object from the forge-mcp `build_*` result unchanged, and call `check` before `sign`. In a 15-payload test every payload arrived byte-exact, but the model re-types each one, so each costs its tokens twice and any partial-signer secret appears twice in the transcript.
 
-Add it to Claude Code with `claude mcp add --transport http sa-forge-signer http://127.0.0.1:8790/mcp --header "Authorization: Bearer $(cat <file>)"`. The client must speak MCP `2026-07-28`: an earlier one is refused at its `initialize` with an error naming that revision.
+Add it to Claude Code with `claude mcp add --transport http sa-forge-signer http://127.0.0.1:8790/mcp --header "Authorization: Bearer $(cat <file>)"`, or let the install script's [`--setup`](install.md#connecting-claude-code) create the token and add it. The client must speak MCP `2026-07-28`: an earlier one is refused at its `initialize` with an error naming that revision.
 
 ## Resources and the skill
 
