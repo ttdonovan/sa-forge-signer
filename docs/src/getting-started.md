@@ -1,10 +1,20 @@
 ---
-description: "From install to an agent signing over MCP: config init, a key, a serve token and claude mcp add, with the full config.toml for a testnet wallet setup and for the recommended session-key setup"
+description: "From install to an agent signing over MCP: the short path with the install script's --setup, then by hand config init, a key, a serve token and claude mcp add, with the full config.toml for a testnet wallet setup and for the recommended session-key setup"
 ---
 
 # Getting started
 
-One pass from nothing to an agent signing through `serve`. It runs everything as your own OS user, which suits testnet: an agent running as you can read the keys (see [Isolation](setup.md#isolation) before using anything of value). [Choosing a setup](setup.md) explains what each setup below can lose.
+One pass from nothing to an agent signing through `serve`, first the short path with the install script's `--setup`, then each step by hand. It runs everything as your own OS user, which suits testnet: an agent running as you can read the keys (see [Isolation](setup.md#isolation) before using anything of value). [Choosing a setup](setup.md) explains what each setup below can lose.
+
+## The short path
+
+```sh
+scripts/installer/install.sh --setup            # install, create the agent token, add the MCP server to Claude Code, install the skill
+sfs config init
+sfs key new alice-session --class session       # or a testnet wallet, as in step 3
+```
+
+Then, as in step 3, add the key's block and the `[[serve.tokens]]` block that `--setup` showed to `config.toml`, with `keys = ["alice-session"]`, and grant and fund the key. Check it with `sfs config show`, leave `sfs-serve` running, and restart Claude Code. [Connecting Claude Code](install.md#connecting-claude-code) says what `--setup` does and how `--uninstall` undoes it. The steps below are the same by hand, and the reference for each part: after `--setup`, skip `token new` in step 3 and `claude mcp add` in step 4.
 
 ## 1. Install
 
@@ -12,7 +22,7 @@ One pass from nothing to an agent signing through `serve`. It runs everything as
 scripts/installer/install.sh        # from a checkout; see Install and update for other ways
 ```
 
-It installs `sa-forge-signer` and `sa-forge-signer-console` into `~/.local/bin` and links `sfs` and `sfs-console` to them ([Install and update](install.md)). The commands below use `sfs`.
+It installs `sa-forge-signer`, `sa-forge-signer-serve`, `sa-forge-signer-mcp` and `sa-forge-signer-console` into `~/.local/bin` and links `sfs`, `sfs-serve`, `sfs-mcp` and `sfs-console` to them ([Install and update](install.md)). The commands below use `sfs`.
 
 ## 2. Create the config
 

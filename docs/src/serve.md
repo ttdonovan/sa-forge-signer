@@ -19,7 +19,7 @@ On SIGTERM or SIGINT the service stops taking requests and lets running ones fin
 
 MCP clients pass the payload object from the forge-mcp `build_*` result unchanged, and call `check` before `sign`. In a 15-payload test every payload arrived byte-exact, but the model re-types each one, so each costs its tokens twice and any partial-signer secret appears twice in the transcript.
 
-Add it to Claude Code with `claude mcp add --transport http sa-forge-signer http://127.0.0.1:8790/mcp --header "Authorization: Bearer $(cat <file>)"`. The client must speak MCP `2026-07-28`: an earlier one is refused at its `initialize` with an error naming that revision.
+Add it to Claude Code with `claude mcp add --transport http sa-forge-signer http://127.0.0.1:8790/mcp --header "Authorization: Bearer $(cat <file>)"`, or let the install script's [`--setup`](install.md#connecting-claude-code) create the token and add it. The client must speak MCP `2026-07-28`: an earlier one is refused at its `initialize` with an error naming that revision.
 
 ## Resources and the skill
 
@@ -62,5 +62,5 @@ claude mcp add sa-forge-signer -- sa-forge-signer-mcp --token-file ~/.config/sa-
 - `--url` must be `https://`, or `http://` only to a loopback host (`127.0.0.1`, `::1`, `localhost`), so the token never crosses a network in clear. `--token-file` is required; the file's content is the token, with surrounding whitespace removed.
 - Without a running `sa-forge-signer-serve` every request fails. A request the service cannot be reached for, or answers without a JSON-RPC reply (a wrong token is HTTP `401`), comes back as a JSON-RPC error with code `-32603` naming the cause. For a `sign` that means the outcome is `unknown`: [reconcile](check-and-sign.md#retrying-safely) before retrying.
 - It waits up to 240 s for each reply, longer than the service's own 220 s drain. `confirm` keys still prompt on the service's terminal, never here.
-- The release archive and the install script's prebuilt download do not carry it yet. `cargo install` from a tag or `scripts/installer/install.sh --from-source` builds it with the other two.
+- The release archive carries it beside the other two, and the [install script](install.md#install-script) installs it with them; `cargo install` from a tag builds all three.
 
