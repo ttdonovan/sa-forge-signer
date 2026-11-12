@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1](https://github.com/ttdonovan/sa-forge-signer/compare/v0.6.0...v0.6.1) - 2026-11-12
+
+### Added
+
+- ship sa-forge-signer-mcp in the release archive, and install it with an sfs-mcp alias from the install script.
+
 ## [0.6.0](https://github.com/ttdonovan/sa-forge-signer/compare/v0.5.0...v0.6.0) - 2026-11-11
 
 ### Added
