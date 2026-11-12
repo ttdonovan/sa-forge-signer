@@ -10,7 +10,8 @@ usage() {
     cat <<'EOF'
 Usage: install.sh [options]
 
-Installs or updates sa-forge-signer (with sa-forge-signer-serve) and sa-forge-signer-console from a release tag.
+Installs or updates sa-forge-signer (with sa-forge-signer-serve and sa-forge-signer-mcp) and
+sa-forge-signer-console from a release tag.
 
   --tag vX.Y.Z           Release to install (default: the latest tag)
   --prefix DIR           Install into DIR/bin (default: ~/.local)
@@ -22,7 +23,8 @@ Installs or updates sa-forge-signer (with sa-forge-signer-serve) and sa-forge-si
   --skip-attestation     Check only SHA256SUMS, not the build provenance (no gh needed)
   --force                Reinstall even if the installed version matches; with --uninstall,
                          remove the signer even though key files remain
-  --no-alias             Do not link sfs, sfs-serve and sfs-console to the binaries in the same directory
+  --no-alias             Do not link sfs, sfs-serve, sfs-mcp and sfs-console to the binaries in the
+                         same directory
   --uninstall            Remove the binaries from the prefix. Never touches the config, keys or
                          audit log; refuses to remove the signer while key files remain
   -h, --help             Show this help
@@ -120,12 +122,15 @@ install_prebuilt() { # install_prebuilt <target>
     local exe="$tmp/${archive%.tar.gz}/sa-forge-signer"
     [ -f "$exe" ] || die "$archive has no sa-forge-signer binary"
     install -m 0755 "$exe" "$bin/sa-forge-signer"
-    # Releases before the serve binary ship only the signer; do not leave a newer one beside an older signer.
-    if [ -f "$exe-serve" ]; then
-        install -m 0755 "$exe-serve" "$bin/sa-forge-signer-serve"
-    else
-        rm -f "$bin/sa-forge-signer-serve"
-    fi
+    # Older releases lack serve or mcp; do not leave a newer one beside an older signer.
+    local extra
+    for extra in serve mcp; do
+        if [ -f "$exe-$extra" ]; then
+            install -m 0755 "$exe-$extra" "$bin/sa-forge-signer-$extra"
+        else
+            rm -f "$bin/sa-forge-signer-$extra"
+        fi
+    done
 }
 
 cargo_install() { # cargo_install <package> <ref-args...>
@@ -211,11 +216,12 @@ if [ "$uninstall" = 1 ]; then
             die "kept sa-forge-signer: key destroy needs it; run the steps above, then --uninstall again (or add --force)"
         fi
     fi
+    unlink_alias sfs-mcp sa-forge-signer-mcp
     unlink_alias sfs-serve sa-forge-signer-serve
     unlink_alias sfs sa-forge-signer
-    # cargo removes both with the package; a prebuilt install leaves the serve binary to remove here
+    # cargo removes all three with the package; a prebuilt install leaves serve and mcp to remove here
     remove sa-forge-signer
-    rm -f "$bin/sa-forge-signer-serve"
+    rm -f "$bin/sa-forge-signer-serve" "$bin/sa-forge-signer-mcp"
     exit 0
 fi
 
@@ -238,6 +244,7 @@ if [ "$from_checkout" = 1 ]; then
     say "installed $("$bin/sa-forge-signer" --version)"
     link_alias sfs sa-forge-signer
     link_alias sfs-serve sa-forge-signer-serve
+    link_alias sfs-mcp sa-forge-signer-mcp
     if [ "$console" = 1 ]; then
         if [ -f "$root/apps/console/Cargo.toml" ]; then
             cargo install --locked --force --path "$root/apps/console" --root "$prefix"
@@ -272,6 +279,7 @@ else
 fi
 link_alias sfs sa-forge-signer
 link_alias sfs-serve sa-forge-signer-serve
+link_alias sfs-mcp sa-forge-signer-mcp
 
 if [ "$console" = 1 ]; then
     if [ -n "$console_ref" ]; then

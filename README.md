@@ -62,7 +62,7 @@ claude mcp add sa-forge-signer -- sa-forge-signer-mcp --token-file ~/.config/sa-
 sa-forge-signer-mcp skill install
 ```
 
-The agent then passes each forge-mcp `build_*` payload to the `check` tool, then `sign`. The service also serves that guidance as MCP resources, starting at `sa-forge-signer://llms.txt`. Either way the service is what signs. `sa-forge-signer-mcp` only relays MCP messages to it, so a stdio setup is two processes: `sa-forge-signer-serve`, started by you as the signer's user, and `sa-forge-signer-mcp`, started by the agent's MCP client. It holds the token, never a key, and every call fails while the service is not running. The prebuilt archive does not carry it yet; `cargo install` builds it with the other two.
+The agent then passes each forge-mcp `build_*` payload to the `check` tool, then `sign`. The service also serves that guidance as MCP resources, starting at `sa-forge-signer://llms.txt`. Either way the service is what signs. `sa-forge-signer-mcp` only relays MCP messages to it, so a stdio setup is two processes: `sa-forge-signer-serve`, started by you as the signer's user, and `sa-forge-signer-mcp`, started by the agent's MCP client. It holds the token, never a key, and every call fails while the service is not running.
 
 ## Docs
 
