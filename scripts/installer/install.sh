@@ -25,10 +25,11 @@ sa-forge-signer-console from a release tag.
                          remove the signer even though key files remain
   --no-alias             Do not link sfs, sfs-serve, sfs-mcp and sfs-console to the binaries in the
                          same directory
-  --uninstall            Remove the binaries from the prefix, and what --setup added (asks first).
+  --uninstall            Remove the binaries from the prefix, and what --setup added (asks first
+                         when --setup added anything; declining removes nothing).
                          Never touches the config, keys, tokens or audit log; refuses to remove
                          the signer while key files remain
-  -y, --yes              With --uninstall, remove what --setup added without asking
+  -y, --yes              With --uninstall, do not ask (declining keeps everything)
   --dry-run              With --setup or --uninstall, print what would be done and change nothing
                          (--setup --dry-run skips the install)
   -h, --help             Show this help
@@ -383,8 +384,19 @@ setup_agent() {
     if [ "$existing" = "$scope" ] && [ "$replace" = 0 ]; then
         say "Claude Code already has a $SERVER MCP server in $scope scope; left as is (--replace to replace it)"
     else
-        [ -z "$existing" ] || run claude mcp remove --scope "$existing" "$SERVER"
-        add_server "$token"
+        if [ "$dry" = 0 ] && [ "$http" = 1 ] && [ ! -s "$token" ]; then
+            die "$token is missing or empty; the HTTP transport needs the agent's token"
+        fi
+        if [ "$existing" = "$scope" ]; then
+            # One name per scope: the old server goes first, so a failed add leaves none.
+            run claude mcp remove --scope "$existing" "$SERVER"
+            add_server "$token" ||
+                die "the old $SERVER server in $scope scope was removed and the new one was not added; fix the error above and rerun --setup"
+        else
+            # Another scope: add first, so a failed add keeps the old server.
+            add_server "$token" || die "the $SERVER server was not added${existing:+; the old one in $existing scope is kept}"
+            [ -z "$existing" ] || run claude mcp remove --scope "$existing" "$SERVER"
+        fi
         st_scope="$scope"
         st_dir="$PWD"
         write_state
@@ -419,9 +431,10 @@ uninstall_setup() {
     f="$(state_file)"
     [ -z "$st_scope" ] || say "--setup added the Claude Code MCP server $SERVER ($st_scope scope, from $st_dir)"
     [ -z "$st_skill" ] || say "--setup installed the skill in $st_skill"
-    if [ "$dry" = 0 ] && [ "$yes" = 0 ] && ! confirm "remove them?"; then
-        say "kept them, and $f (pass -y to remove them without asking)"
-        return 0
+    # Declining keeps everything: removing the binaries alone would leave the server pointing at nothing.
+    if [ "$dry" = 0 ] && [ "$yes" = 0 ] && ! confirm "remove them, and the binaries?"; then
+        say "nothing removed (pass -y to remove without asking)"
+        exit 0
     fi
     if [ -n "$st_scope" ]; then
         if [ "$dry" = 0 ] && ! have claude; then
