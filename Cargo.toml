@@ -55,7 +55,7 @@ zeroize = "1.9.0"
 [dev-dependencies]
 # Tests only: the Rust MCP SDK's types check the messages the hand-written handler writes. Never a
 # dependency of the binaries (docs/src/dev/design.md).
-rmcp = { version = "=3.9.0", default-features = false }
+rmcp = { version = "=3.10.0", default-features = false }
 
 [lints.rust]
 unsafe_code = "forbid"
